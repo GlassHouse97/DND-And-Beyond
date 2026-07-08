@@ -77,6 +77,126 @@ def _invite_code_seed(name: str) -> str:
     return _slug(name).replace("-", "")[:6].upper() or "QUEST"
 
 
+ABILITY_KEYS: tuple[str, ...] = ("str", "dex", "con", "int", "wis", "cha")
+ABILITY_LABELS: dict[str, str] = {
+    "str": "Strength",
+    "dex": "Dexterity",
+    "con": "Constitution",
+    "int": "Intelligence",
+    "wis": "Wisdom",
+    "cha": "Charisma",
+}
+ABILITY_KEYS_BY_LABEL: dict[str, str] = {label: key for key, label in ABILITY_LABELS.items()}
+
+STANDARD_ARRAY: tuple[int, ...] = (15, 14, 13, 12, 10, 8)
+
+ANCESTRY_OPTIONS: tuple[str, ...] = (
+    "Human",
+    "Dwarf",
+    "Elf",
+    "Halfling",
+    "Dragonborn",
+    "Gnome",
+    "Half-Elf",
+    "Half-Orc",
+    "Tiefling",
+)
+
+CLASS_OPTIONS: tuple[str, ...] = (
+    "Barbarian",
+    "Bard",
+    "Cleric",
+    "Druid",
+    "Fighter",
+    "Monk",
+    "Paladin",
+    "Ranger",
+    "Rogue",
+    "Sorcerer",
+    "Warlock",
+    "Wizard",
+)
+
+BACKGROUND_OPTIONS: tuple[str, ...] = ("Acolyte", "Criminal", "Folk Hero", "Noble", "Sage", "Soldier")
+
+ANCESTRY_ABILITY_BONUSES: dict[str, dict[str, int]] = {
+    "Human": {"str": 1, "dex": 1, "con": 1, "int": 1, "wis": 1, "cha": 1},
+    "Dwarf": {"con": 2},
+    "Elf": {"dex": 2},
+    "Halfling": {"dex": 2},
+    "Dragonborn": {"str": 2, "cha": 1},
+    "Gnome": {"int": 2},
+    "Half-Elf": {"cha": 2},
+    "Half-Orc": {"str": 2, "con": 1},
+    "Tiefling": {"int": 1, "cha": 2},
+}
+
+CLASS_ABILITY_PRIORITIES: dict[str, tuple[str, ...]] = {
+    "Barbarian": ("str", "con", "dex", "wis", "cha", "int"),
+    "Bard": ("cha", "dex", "con", "wis", "int", "str"),
+    "Cleric": ("wis", "con", "str", "cha", "int", "dex"),
+    "Druid": ("wis", "con", "dex", "int", "cha", "str"),
+    "Fighter": ("str", "con", "dex", "wis", "cha", "int"),
+    "Monk": ("dex", "wis", "con", "str", "cha", "int"),
+    "Paladin": ("str", "cha", "con", "wis", "dex", "int"),
+    "Ranger": ("dex", "wis", "con", "str", "int", "cha"),
+    "Rogue": ("dex", "int", "cha", "con", "wis", "str"),
+    "Sorcerer": ("cha", "con", "dex", "wis", "int", "str"),
+    "Warlock": ("cha", "con", "dex", "wis", "int", "str"),
+    "Wizard": ("int", "con", "dex", "wis", "cha", "str"),
+}
+
+CLASS_SAVE_PROFICIENCIES: dict[str, str] = {
+    "Barbarian": "Strength, Constitution",
+    "Bard": "Dexterity, Charisma",
+    "Cleric": "Wisdom, Charisma",
+    "Druid": "Intelligence, Wisdom",
+    "Fighter": "Strength, Constitution",
+    "Monk": "Strength, Dexterity",
+    "Paladin": "Wisdom, Charisma",
+    "Ranger": "Strength, Dexterity",
+    "Rogue": "Dexterity, Intelligence",
+    "Sorcerer": "Constitution, Charisma",
+    "Warlock": "Wisdom, Charisma",
+    "Wizard": "Intelligence, Wisdom",
+}
+
+
+def _recommended_standard_array(character_class: str) -> dict[str, int]:
+    priorities = CLASS_ABILITY_PRIORITIES.get(character_class, CLASS_ABILITY_PRIORITIES["Fighter"])
+    return dict(zip(priorities, STANDARD_ARRAY, strict=True))
+
+
+def _ability_bonuses_for_ancestry(
+    ancestry: str,
+    half_elf_bonus_one: str = "dex",
+    half_elf_bonus_two: str = "con",
+) -> dict[str, int]:
+    bonuses = {key: ANCESTRY_ABILITY_BONUSES.get(ancestry, {}).get(key, 0) for key in ABILITY_KEYS}
+    if ancestry == "Half-Elf":
+        choices = []
+        for choice in (half_elf_bonus_one, half_elf_bonus_two):
+            if choice in ABILITY_KEYS and choice != "cha" and choice not in choices:
+                choices.append(choice)
+        for choice in choices[:2]:
+            bonuses[choice] += 1
+    return bonuses
+
+
+def _apply_ancestry_bonuses(
+    ancestry: str,
+    base_scores: dict[str, int],
+    half_elf_bonus_one: str = "dex",
+    half_elf_bonus_two: str = "con",
+) -> dict[str, int]:
+    bonuses = _ability_bonuses_for_ancestry(ancestry, half_elf_bonus_one, half_elf_bonus_two)
+    return {key: max(1, min(30, int(base_scores[key]) + bonuses[key])) for key in ABILITY_KEYS}
+
+
+def _format_ability_bonus(bonus: int) -> str:
+    return f"+{bonus}" if bonus > 0 else "0"
+
+
 def _extract_verification_token(value: str) -> str:
     raw_value = value.strip()
     if not raw_value:
@@ -189,6 +309,13 @@ class AppState(rx.State):
     selected_character_id: int = 0
     join_character_choice: str = ""
     assign_character_choice: str = ""
+    builder_ancestry: str = "Human"
+    builder_class: str = "Fighter"
+    builder_background: str = "Soldier"
+    builder_scores: dict[str, str] = {key: str(value) for key, value in _recommended_standard_array("Fighter").items()}
+    builder_saves: str = CLASS_SAVE_PROFICIENCIES["Fighter"]
+    builder_half_elf_bonus_one: str = "dex"
+    builder_half_elf_bonus_two: str = "con"
 
     characters: list[dict[str, Any]] = []
     campaigns: list[dict[str, Any]] = []
@@ -364,6 +491,42 @@ class AppState(rx.State):
     def set_assign_character_choice(self, choice: str) -> None:
         self.assign_character_choice = choice
 
+    def set_builder_ancestry(self, ancestry: str) -> None:
+        self.builder_ancestry = ancestry if ancestry in ANCESTRY_OPTIONS else "Human"
+
+    def set_builder_class(self, character_class: str) -> None:
+        self.builder_class = character_class if character_class in CLASS_OPTIONS else "Fighter"
+        self.builder_scores = {
+            key: str(value)
+            for key, value in _recommended_standard_array(self.builder_class).items()
+        }
+        self.builder_saves = CLASS_SAVE_PROFICIENCIES.get(self.builder_class, CLASS_SAVE_PROFICIENCIES["Fighter"])
+
+    def set_builder_background(self, background: str) -> None:
+        self.builder_background = background if background in BACKGROUND_OPTIONS else "Soldier"
+
+    def set_half_elf_bonus_one(self, label: str) -> None:
+        ability = ABILITY_KEYS_BY_LABEL.get(label, "dex")
+        if ability == "cha":
+            ability = "dex"
+        if ability == self.builder_half_elf_bonus_two:
+            self.builder_half_elf_bonus_two = "con" if ability != "con" else "dex"
+        self.builder_half_elf_bonus_one = ability
+
+    def set_half_elf_bonus_two(self, label: str) -> None:
+        ability = ABILITY_KEYS_BY_LABEL.get(label, "con")
+        if ability == "cha":
+            ability = "con"
+        if ability == self.builder_half_elf_bonus_one:
+            self.builder_half_elf_bonus_one = "dex" if ability != "dex" else "con"
+        self.builder_half_elf_bonus_two = ability
+
+    def set_builder_score(self, ability: str, value: str) -> None:
+        if ability not in ABILITY_KEYS:
+            return
+        score = _safe_int(value, _recommended_standard_array(self.builder_class)[ability], minimum=1, maximum=30)
+        self.builder_scores = {**self.builder_scores, ability: str(score)}
+
     def go(self, view: str) -> None:
         if view != "auth" and not self.is_authenticated:
             self.current_view = "auth"
@@ -382,25 +545,35 @@ class AppState(rx.State):
         if not self.is_authenticated:
             self.go("auth")
             return
-        scores = {
-            "str": _safe_int(form_data.get("str"), 10, minimum=1, maximum=30),
-            "dex": _safe_int(form_data.get("dex"), 10, minimum=1, maximum=30),
-            "con": _safe_int(form_data.get("con"), 10, minimum=1, maximum=30),
-            "int": _safe_int(form_data.get("int"), 10, minimum=1, maximum=30),
-            "wis": _safe_int(form_data.get("wis"), 10, minimum=1, maximum=30),
-            "cha": _safe_int(form_data.get("cha"), 10, minimum=1, maximum=30),
+        ancestry = form_data.get("ancestry") or self.builder_ancestry
+        character_class = form_data.get("character_class") or self.builder_class
+        default_scores = _recommended_standard_array(character_class)
+        base_scores = {
+            key: _safe_int(
+                form_data.get(key, self.builder_scores.get(key)),
+                default_scores[key],
+                minimum=1,
+                maximum=30,
+            )
+            for key in ABILITY_KEYS
         }
+        scores = _apply_ancestry_bonuses(
+            ancestry,
+            base_scores,
+            self.builder_half_elf_bonus_one,
+            self.builder_half_elf_bonus_two,
+        )
         character = {
             "name": form_data.get("name", "Unnamed Hero").strip() or "Unnamed Hero",
-            "ancestry": form_data.get("ancestry", "Human"),
-            "character_class": form_data.get("character_class", "Fighter"),
-            "background": form_data.get("background", "Acolyte"),
+            "ancestry": ancestry,
+            "character_class": character_class,
+            "background": form_data.get("background") or self.builder_background,
             "level": _safe_int(form_data.get("level"), 1, minimum=1, maximum=20),
             **scores,
             "armor": form_data.get("armor", "none"),
             "shield": form_data.get("shield", "off") == "on",
             "skills": form_data.get("skills", "Perception"),
-            "saves": form_data.get("saves", "Strength, Constitution"),
+            "saves": form_data.get("saves") or self.builder_saves,
             "notes": form_data.get("notes", ""),
         }
         character_id = data_access.create_character(self.user_id, character)
@@ -701,6 +874,84 @@ class AppState(rx.State):
             }
             for row in self.initiative
         ]
+
+    @rx.var
+    def builder_score_rows(self) -> list[dict[str, Any]]:
+        bonuses = _ability_bonuses_for_ancestry(
+            self.builder_ancestry,
+            self.builder_half_elf_bonus_one,
+            self.builder_half_elf_bonus_two,
+        )
+        recommended = _recommended_standard_array(self.builder_class)
+        rows = []
+        for key in ABILITY_KEYS:
+            base = _safe_int(self.builder_scores.get(key), recommended[key], minimum=1, maximum=30)
+            bonus = bonuses[key]
+            rows.append(
+                {
+                    "key": key,
+                    "label": key.upper(),
+                    "full_label": ABILITY_LABELS[key],
+                    "base": base,
+                    "bonus": _format_ability_bonus(bonus),
+                    "total": max(1, min(30, base + bonus)),
+                }
+            )
+        return rows
+
+    @rx.var
+    def builder_bonus_labels(self) -> dict[str, str]:
+        bonuses = _ability_bonuses_for_ancestry(
+            self.builder_ancestry,
+            self.builder_half_elf_bonus_one,
+            self.builder_half_elf_bonus_two,
+        )
+        return {key: _format_ability_bonus(bonuses[key]) for key in ABILITY_KEYS}
+
+    @rx.var
+    def builder_final_scores(self) -> dict[str, int]:
+        base_scores = {
+            key: _safe_int(
+                self.builder_scores.get(key),
+                _recommended_standard_array(self.builder_class)[key],
+                minimum=1,
+                maximum=30,
+            )
+            for key in ABILITY_KEYS
+        }
+        return _apply_ancestry_bonuses(
+            self.builder_ancestry,
+            base_scores,
+            self.builder_half_elf_bonus_one,
+            self.builder_half_elf_bonus_two,
+        )
+
+    @rx.var
+    def ancestry_bonus_text(self) -> str:
+        bonuses = _ability_bonuses_for_ancestry(
+            self.builder_ancestry,
+            self.builder_half_elf_bonus_one,
+            self.builder_half_elf_bonus_two,
+        )
+        parts = [f"{_format_ability_bonus(value)} {key.upper()}" for key, value in bonuses.items() if value]
+        return ", ".join(parts) if parts else "No ability score bonus"
+
+    @rx.var
+    def class_array_text(self) -> str:
+        recommended = _recommended_standard_array(self.builder_class)
+        return ", ".join(f"{key.upper()} {recommended[key]}" for key in ABILITY_KEYS)
+
+    @rx.var
+    def background_bonus_text(self) -> str:
+        return "No ability score change in this 5e ruleset"
+
+    @rx.var
+    def half_elf_bonus_one_label(self) -> str:
+        return ABILITY_LABELS[self.builder_half_elf_bonus_one]
+
+    @rx.var
+    def half_elf_bonus_two_label(self) -> str:
+        return ABILITY_LABELS[self.builder_half_elf_bonus_two]
 
     @rx.var
     def has_characters(self) -> bool:

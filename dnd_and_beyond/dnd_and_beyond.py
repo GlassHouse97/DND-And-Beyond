@@ -6,7 +6,13 @@ from typing import Any
 
 import reflex as rx
 
-from dnd_and_beyond.state import AppState
+from dnd_and_beyond.state import (
+    ABILITY_LABELS,
+    ANCESTRY_OPTIONS,
+    BACKGROUND_OPTIONS,
+    CLASS_OPTIONS,
+    AppState,
+)
 
 
 def icon_button(icon: str, label: str, on_click=None, class_name: str = "icon-button") -> rx.Component:
@@ -334,23 +340,98 @@ def character_builder() -> rx.Component:
                 rx.grid(
                     builder_section(
                         "Identity",
-                        rx.input(name="name", placeholder="Character name", class_name="field"),
-                        rx.select(["Human", "Dwarf", "Elf", "Halfling", "Dragonborn", "Gnome", "Half-Elf", "Half-Orc", "Tiefling"], name="ancestry", default_value="Human", class_name="field"),
-                        rx.select(["Barbarian", "Bard", "Cleric", "Druid", "Fighter", "Monk", "Paladin", "Ranger", "Rogue", "Sorcerer", "Warlock", "Wizard"], name="character_class", default_value="Fighter", class_name="field"),
-                        rx.select(["Acolyte", "Criminal", "Folk Hero", "Noble", "Sage", "Soldier"], name="background", default_value="Soldier", class_name="field"),
-                        rx.input(name="level", placeholder="Level", default_value="1", class_name="field"),
+                        labeled_field("Name", rx.input(name="name", placeholder="Character name", class_name="field")),
+                        labeled_field(
+                            "Race",
+                            rx.select(
+                                list(ANCESTRY_OPTIONS),
+                                name="ancestry",
+                                default_value="Human",
+                                on_change=AppState.set_builder_ancestry,
+                                class_name="field",
+                            ),
+                            AppState.ancestry_bonus_text,
+                        ),
+                        rx.cond(
+                            AppState.builder_ancestry == "Half-Elf",
+                            rx.grid(
+                                labeled_field(
+                                    "Half-Elf +1",
+                                    rx.select(
+                                        [
+                                            ABILITY_LABELS["str"],
+                                            ABILITY_LABELS["dex"],
+                                            ABILITY_LABELS["con"],
+                                            ABILITY_LABELS["int"],
+                                            ABILITY_LABELS["wis"],
+                                        ],
+                                        default_value=AppState.half_elf_bonus_one_label,
+                                        on_change=AppState.set_half_elf_bonus_one,
+                                        class_name="field",
+                                    ),
+                                ),
+                                labeled_field(
+                                    "Half-Elf +1",
+                                    rx.select(
+                                        [
+                                            ABILITY_LABELS["str"],
+                                            ABILITY_LABELS["dex"],
+                                            ABILITY_LABELS["con"],
+                                            ABILITY_LABELS["int"],
+                                            ABILITY_LABELS["wis"],
+                                        ],
+                                        default_value=AppState.half_elf_bonus_two_label,
+                                        on_change=AppState.set_half_elf_bonus_two,
+                                        class_name="field",
+                                    ),
+                                ),
+                                columns="2",
+                                spacing="3",
+                            ),
+                            rx.fragment(),
+                        ),
+                        labeled_field(
+                            "Class",
+                            rx.select(
+                                list(CLASS_OPTIONS),
+                                name="character_class",
+                                default_value="Fighter",
+                                on_change=AppState.set_builder_class,
+                                class_name="field",
+                            ),
+                            AppState.class_array_text,
+                        ),
+                        labeled_field(
+                            "Background",
+                            rx.select(
+                                list(BACKGROUND_OPTIONS),
+                                name="background",
+                                default_value="Soldier",
+                                on_change=AppState.set_builder_background,
+                                class_name="field",
+                            ),
+                            AppState.background_bonus_text,
+                        ),
+                        labeled_field("Level", rx.input(name="level", placeholder="Level", default_value="1", class_name="field")),
                     ),
                     builder_section(
                         "Ability Scores",
                         score_grid(),
-                        rx.text("Point buy and rolled arrays can be layered in later; the math below already uses exact 5e modifiers.", class_name="hint"),
+                        rx.text("Class chooses the standard-array order. Race bonuses are added to the final score shown on each tile.", class_name="hint"),
+                        rx.grid(rx.foreach(AppState.builder_score_rows, score_summary_row), columns="2", spacing="2", class_name="score-summary-grid"),
                     ),
                     builder_section(
                         "Equipment & Proficiencies",
                         rx.select(["none", "leather", "studded leather", "scale mail", "half plate", "chain mail", "plate"], name="armor", default_value="chain mail", class_name="field"),
                         rx.checkbox("Shield equipped", name="shield", default_checked=True, class_name="check"),
                         rx.input(name="skills", placeholder="Skill proficiencies", default_value="Athletics, Perception", class_name="field"),
-                        rx.input(name="saves", placeholder="Saving throw proficiencies", default_value="Strength, Constitution", class_name="field"),
+                        rx.input(
+                            name="saves",
+                            placeholder="Saving throw proficiencies",
+                            default_value=AppState.builder_saves,
+                            key=AppState.builder_class + "-saves",
+                            class_name="field",
+                        ),
                         rx.text_area(name="notes", placeholder="Character notes", class_name="textarea"),
                     ),
                     columns="3",
@@ -374,21 +455,63 @@ def builder_section(title: str, *children: rx.Component) -> rx.Component:
     return rx.box(rx.heading(title, class_name="section-heading"), rx.vstack(*children, spacing="3", align="stretch"), class_name="panel")
 
 
+def labeled_field(label: str, control: rx.Component, hint: Any = "") -> rx.Component:
+    return rx.vstack(
+        rx.text(label, class_name="field-label"),
+        control,
+        rx.cond(hint != "", rx.text(hint, class_name="field-hint"), rx.fragment()),
+        spacing="1",
+        align="stretch",
+        class_name="field-group",
+    )
+
+
 def score_grid() -> rx.Component:
     return rx.grid(
-        score_input("STR", "str", "15"),
-        score_input("DEX", "dex", "14"),
-        score_input("CON", "con", "14"),
-        score_input("INT", "int", "10"),
-        score_input("WIS", "wis", "12"),
-        score_input("CHA", "cha", "8"),
+        score_input("STR", "str"),
+        score_input("DEX", "dex"),
+        score_input("CON", "con"),
+        score_input("INT", "int"),
+        score_input("WIS", "wis"),
+        score_input("CHA", "cha"),
         columns="3",
         spacing="3",
     )
 
 
-def score_input(label: str, name: str, value: str) -> rx.Component:
-    return rx.box(rx.text(label, class_name="score-label"), rx.input(name=name, default_value=value, class_name="score-input"), class_name="score-box")
+def score_input(label: str, name: str) -> rx.Component:
+    return rx.box(
+        rx.hstack(rx.text(label, class_name="score-label"), rx.text(ABILITY_LABELS[name], class_name="score-full-label"), justify="between", width="100%"),
+        rx.input(
+            name=name,
+            default_value=AppState.builder_scores[name],
+            on_blur=lambda value: AppState.set_builder_score(name, value),
+            key=AppState.builder_class + "-" + name,
+            class_name="score-input",
+        ),
+        rx.hstack(
+            rx.text("Race", class_name="score-meta-label"),
+            rx.text(AppState.builder_bonus_labels[name], class_name="bonus-pill"),
+            rx.spacer(),
+            rx.text("Final", class_name="score-meta-label"),
+            rx.text(AppState.builder_final_scores[name], class_name="score-total"),
+            width="100%",
+            align="center",
+        ),
+        class_name="score-box",
+    )
+
+
+def score_summary_row(row: rx.Var[dict]) -> rx.Component:
+    return rx.hstack(
+        rx.text(row["label"], class_name="score-summary-label"),
+        rx.spacer(),
+        rx.text(row["base"], class_name="score-summary-value"),
+        rx.text(row["bonus"], class_name="bonus-pill small"),
+        rx.text("=", class_name="score-summary-equals"),
+        rx.text(row["total"], class_name="score-summary-total"),
+        class_name="score-summary-row",
+    )
 
 
 def character_switcher() -> rx.Component:
