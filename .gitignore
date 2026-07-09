@@ -15,6 +15,7 @@ __pycache__/
 *.db
 data/
 .env
+.env.production
 dist/
 build/
 

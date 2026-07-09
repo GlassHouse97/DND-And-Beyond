@@ -5,8 +5,12 @@ description = "A polished 5e-compatible character, campaign, and DM table app bu
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "reflex>=0.8.0",
+    # Pinned to the minor version the app is developed and tested against;
+    # the Docker build installs whatever this allows.
+    "reflex>=0.9.6,<0.10",
     "requests>=2.32.0",
+    # Production database driver (used when DATABASE_URL is set, e.g. Neon).
+    "psycopg[binary,pool]>=3.1",
 ]
 
 [project.optional-dependencies]

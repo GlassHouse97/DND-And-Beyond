@@ -328,6 +328,50 @@ def join_campaign_panel() -> rx.Component:
     )
 
 
+def reset_builder_dialog() -> rx.Component:
+    """Reset All button that confirms before discarding unsaved builder changes."""
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(
+                rx.icon("rotate-ccw", size=16),
+                rx.text("Reset All"),
+                type="button",
+                class_name="icon-button danger",
+            ),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title("Reset all builder changes?"),
+            rx.alert_dialog.description(
+                rx.cond(
+                    AppState.is_builder_editing,
+                    rx.text(
+                        "This restores ",
+                        AppState.builder_name,
+                        "'s last saved values. Everything you changed since opening the editor will be lost.",
+                    ),
+                    rx.text(
+                        "This clears every choice — name, race, class, scores, skills, armor, and notes — "
+                        "back to a fresh default hero.",
+                    ),
+                ),
+            ),
+            rx.flex(
+                rx.alert_dialog.cancel(rx.button("Keep my changes", class_name="secondary-action")),
+                rx.alert_dialog.action(
+                    rx.button(
+                        "Reset all",
+                        on_click=AppState.reset_builder_form,
+                        class_name="icon-button danger",
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+        ),
+    )
+
+
 def character_builder() -> rx.Component:
     return shell(
         rx.vstack(
@@ -516,6 +560,7 @@ def character_builder() -> rx.Component:
                         rx.button("Cancel Edit", on_click=AppState.cancel_edit_character, type="button", class_name="secondary-action"),
                         rx.button("Open Existing Sheet", on_click=lambda: AppState.go("sheet"), type="button", class_name="secondary-action"),
                     ),
+                    reset_builder_dialog(),
                     class_name="form-actions",
                 ),
                 on_submit=AppState.create_character,

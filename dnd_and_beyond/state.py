@@ -324,6 +324,9 @@ class AppState(rx.State):
     assign_character_choice: str = ""
     builder_mode: str = "create"
     editing_character_id: int = 0
+    # Bumped whenever the builder is (re)filled so uncontrolled inputs remount
+    # and pick up fresh default values.
+    builder_form_nonce: int = 0
     builder_name: str = ""
     builder_level: str = "1"
     builder_armor: str = "chain mail"
@@ -613,6 +616,7 @@ class AppState(rx.State):
         self.builder_saves = CLASS_SAVE_PROFICIENCIES["Fighter"]
         self.builder_half_elf_bonus_one = "dex"
         self.builder_half_elf_bonus_two = "con"
+        self.builder_form_nonce += 1
 
     def start_new_character(self) -> None:
         self._reset_builder()
@@ -651,11 +655,22 @@ class AppState(rx.State):
         # them as final values and never re-applies bonuses on save.
         self.builder_scores = {key: str(character[key]) for key in ABILITY_KEYS}
         self.builder_saves = character["saves"]
+        self.builder_form_nonce += 1
         self.go("builder")
 
     def cancel_edit_character(self) -> None:
         self._reset_builder()
         self.go("sheet")
+
+    def reset_builder_form(self) -> None:
+        """Throw away unsaved builder changes (confirmed via dialog in the UI)."""
+        if self.builder_mode == "edit" and self.editing_character_id:
+            name = self.builder_name
+            self.start_edit_character(self.editing_character_id)
+            self.app_message = f"Restored {name}'s last saved values."
+        else:
+            self._reset_builder()
+            self.app_message = "Builder reset to a fresh hero."
 
     def delete_character(self, character_id: int) -> None:
         character = next((c for c in self.characters if int(c["id"]) == int(character_id)), None)
@@ -1026,8 +1041,8 @@ class AppState(rx.State):
 
     @rx.var
     def builder_form_key(self) -> str:
-        """Remounts prefilled builder inputs when switching between create/edit targets."""
-        return f"{self.builder_mode}-{self.editing_character_id}"
+        """Remounts prefilled builder inputs when switching targets or resetting."""
+        return f"{self.builder_mode}-{self.editing_character_id}-{self.builder_form_nonce}"
 
     @rx.var
     def builder_score_rows(self) -> list[dict[str, Any]]:

@@ -108,6 +108,67 @@ DndAndBeyond/
   rxconfig.py
 ```
 
+## Deploying (single-container Docker)
+
+The repo ships a production [Dockerfile](Dockerfile) based on Reflex's official
+"simple-one-port" pattern: Caddy serves the compiled frontend and proxies the
+websocket/backend routes on one port, with Redis inside the container for
+session state. The SQLite database lives at `/data`, which must be a
+**persistent volume** on your platform or all accounts/campaigns vanish on
+each redeploy.
+
+Test it locally:
+
+```powershell
+docker build -t dnd-and-beyond .
+docker run -p 8080:8080 -v dnd_data:/data dnd-and-beyond
+# open http://localhost:8080
+```
+
+### Database
+
+The app runs on SQLite locally (zero setup) and on **Postgres in production**:
+set `DATABASE_URL` to a Postgres connection string (e.g. from
+[Neon](https://neon.tech)'s free tier) and every query runs against it. This is
+required on serverless platforms like Cloud Run, whose filesystems are wiped on
+every restart.
+
+### Google Cloud Run + Neon (recommended: ~free at small scale)
+
+1. Create a free [Neon](https://neon.tech) project and copy its connection
+   string (`postgresql://...neon.tech/...?sslmode=require`).
+2. Install the [gcloud CLI](https://cloud.google.com/sdk/docs/install), run
+   `gcloud auth login`, and create a Google Cloud project with billing enabled
+   (friends-group usage stays inside the free tier).
+3. Copy `.env.production.example` to `.env.production` and fill in the Neon
+   URL and Gmail SMTP values. For Gmail, create an
+   [App Password](https://myaccount.google.com/apppasswords) (requires
+   2-Step Verification) — never your real password.
+4. Verify the production database connection:
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\verify_postgres.py
+   ```
+
+   The script creates a uniquely named throwaway account, character, and
+   campaign, verifies the core read paths, then deletes only those smoke-test
+   records.
+5. Deploy:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\deploy_cloudrun.ps1 -ProjectId your-project-id
+   ```
+
+The script enables the needed Google APIs, builds the container with Cloud
+Build, deploys with websocket-friendly settings (`--session-affinity`,
+`--timeout 3600`), and — on the very first deploy — automatically rebuilds
+once more so the app's real public URL is compiled into the frontend. Re-run
+the same command any time you want to ship an update.
+
+Without `SMTP_*` set, verification codes are written to a log file inside the
+container — fine for testing, but players can't read that file, so real email
+is required for public signups.
+
 ## Legal and sourcing
 
 Rules content is intended to come from the 5.1 SRD via `dnd5eapi.co`, redistributed under CC-BY-4.0. This project does not use Wizards of the Coast logos, the official ampersand logo, or non-SRD Player's Handbook content.

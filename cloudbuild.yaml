@@ -1,0 +1,18 @@
+# Builds the production image with the public URL baked into the frontend.
+# Used by scripts/deploy_cloudrun.ps1 — not intended to be run by hand.
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "--build-arg"
+      - "API_URL=${_API_URL}"
+      - "-t"
+      - "${_IMAGE}"
+      - "."
+images:
+  - "${_IMAGE}"
+substitutions:
+  _API_URL: "http://localhost:8080"
+  _IMAGE: "unset"
+options:
+  logging: CLOUD_LOGGING_ONLY
