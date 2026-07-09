@@ -4,12 +4,20 @@
 # websocket) on ONE port, so this works on Railway, Render, Fly.io, etc.
 #
 # Platform checklist:
-#   - Mount a persistent volume at /data (the SQLite database lives there).
+#   - Set DATABASE_URL for Postgres on serverless platforms like Cloud Run.
 #   - Set API_URL (as a build-time variable) to the app's public URL,
 #     e.g. https://your-app.up.railway.app — then redeploy so the frontend
 #     is compiled pointing at itself.
 #   - Set APP_BASE_URL and the SMTP_* variables for verification emails.
-FROM python:3.13
+FROM node:22-bookworm-slim AS node
+
+FROM python:3.13-bookworm
+
+# Reflex needs Node 22.12+ to initialize and build the frontend.
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/bin/npm /usr/local/bin/npm
+COPY --from=node /usr/local/bin/npx /usr/local/bin/npx
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 
 # Render expects 10000; Railway respects $PORT automatically.
 ARG PORT=8080
