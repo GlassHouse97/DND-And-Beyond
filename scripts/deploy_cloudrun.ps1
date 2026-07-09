@@ -87,35 +87,51 @@ if ($firstDeploy) {
     Write-Host "==> First deploy: bootstrap build (public URL not known yet)" -ForegroundColor Yellow
 }
 
+function Format-YamlValue {
+    param([string]$Value)
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
+function New-CloudRunEnvFile {
+    param([string]$ApiUrl)
+    $envVarsFile = New-TemporaryFile
+    $lines = @(
+        "DATABASE_URL: $(Format-YamlValue $prodVars['DATABASE_URL'])",
+        "APP_BASE_URL: $(Format-YamlValue $ApiUrl)",
+        "SMTP_HOST: $(Format-YamlValue $prodVars['SMTP_HOST'])",
+        "SMTP_PORT: $(Format-YamlValue $prodVars['SMTP_PORT'])",
+        "SMTP_USERNAME: $(Format-YamlValue $prodVars['SMTP_USERNAME'])",
+        "SMTP_PASSWORD: $(Format-YamlValue $prodVars['SMTP_PASSWORD'])",
+        "SMTP_FROM: $(Format-YamlValue $prodVars['SMTP_FROM'])"
+    )
+    Set-Content -LiteralPath $envVarsFile.FullName -Value $lines -Encoding UTF8
+    return $envVarsFile
+}
+
 function Build-And-Deploy {
     param([string]$ApiUrl)
     Write-Host "==> Building image (API_URL=$ApiUrl)" -ForegroundColor Cyan
     Invoke-Gcloud @("builds", "submit", "--config", "cloudbuild.yaml", "--substitutions", "_API_URL=$ApiUrl,_IMAGE=$image")
 
     Write-Host "==> Deploying to Cloud Run" -ForegroundColor Cyan
-    $envPairs = @(
-        "DATABASE_URL=$($prodVars['DATABASE_URL'])",
-        "APP_BASE_URL=$ApiUrl",
-        "SMTP_HOST=$($prodVars['SMTP_HOST'])",
-        "SMTP_PORT=$($prodVars['SMTP_PORT'])",
-        "SMTP_USERNAME=$($prodVars['SMTP_USERNAME'])",
-        "SMTP_PASSWORD=$($prodVars['SMTP_PASSWORD'])",
-        "SMTP_FROM=$($prodVars['SMTP_FROM'])"
-    )
-    # ^ delimiter because DATABASE_URL contains commas-safe characters like '=' and '&'
-    $joined = $envPairs -join "^"
-    Invoke-Gcloud @(
-        "run", "deploy", $ServiceName,
-        "--image", $image,
-        "--region", $Region,
-        "--allow-unauthenticated",
-        "--session-affinity",
-        "--timeout", "3600",
-        "--min-instances", "0",
-        "--max-instances", "2",
-        "--memory", "1Gi",
-        "--set-env-vars", "^^^$joined"
-    )
+    $envVarsFile = New-CloudRunEnvFile -ApiUrl $ApiUrl
+    try {
+        Invoke-Gcloud @(
+            "run", "deploy", $ServiceName,
+            "--image", $image,
+            "--region", $Region,
+            "--allow-unauthenticated",
+            "--session-affinity",
+            "--timeout", "3600",
+            "--min-instances", "0",
+            "--max-instances", "2",
+            "--memory", "1Gi",
+            "--env-vars-file", $envVarsFile.FullName
+        )
+    }
+    finally {
+        Remove-Item -LiteralPath $envVarsFile.FullName -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Build-And-Deploy -ApiUrl $serviceUrl
