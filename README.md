@@ -159,6 +159,11 @@ every restart.
    powershell -ExecutionPolicy Bypass -File scripts\deploy_cloudrun.ps1 -ProjectId your-project-id
    ```
 
+   Replace `your-project-id` with the Google Cloud **Project ID** shown in the
+   Google Cloud Console project selector. It is usually lowercase with hyphens,
+   such as `dnd-and-beyond-123456`; it is not necessarily the same as the
+   project display name.
+
 The script enables the needed Google APIs, builds the container with Cloud
 Build, deploys with websocket-friendly settings (`--session-affinity`,
 `--timeout 3600`), and — on the very first deploy — automatically rebuilds

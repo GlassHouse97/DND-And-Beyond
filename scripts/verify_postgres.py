@@ -100,21 +100,24 @@ def main() -> int:
         print("POSTGRES_SMOKE_OK")
         return 0
     finally:
-        if user_id is not None or campaign_id is not None or character_id is not None:
-            with data.connect() as conn:
-                if campaign_id is not None:
-                    conn.execute(data._q("DELETE FROM initiative_combatants WHERE campaign_id = ?"), (campaign_id,))
-                    conn.execute(data._q("DELETE FROM npcs WHERE campaign_id = ?"), (campaign_id,))
-                    conn.execute(data._q("DELETE FROM dm_notes WHERE campaign_id = ?"), (campaign_id,))
-                    conn.execute(data._q("DELETE FROM campaign_members WHERE campaign_id = ?"), (campaign_id,))
-                    conn.execute(data._q("DELETE FROM campaigns WHERE id = ?"), (campaign_id,))
-                if character_id is not None:
-                    conn.execute(data._q("DELETE FROM campaign_members WHERE character_id = ?"), (character_id,))
-                    conn.execute(data._q("DELETE FROM characters WHERE id = ?"), (character_id,))
-                if user_id is not None:
-                    conn.execute(data._q("DELETE FROM campaign_members WHERE user_id = ?"), (user_id,))
-                    conn.execute(data._q("DELETE FROM users WHERE id = ?"), (user_id,))
-                conn.commit()
+        try:
+            if user_id is not None or campaign_id is not None or character_id is not None:
+                with data.connect() as conn:
+                    if campaign_id is not None:
+                        conn.execute(data._q("DELETE FROM initiative_combatants WHERE campaign_id = ?"), (campaign_id,))
+                        conn.execute(data._q("DELETE FROM npcs WHERE campaign_id = ?"), (campaign_id,))
+                        conn.execute(data._q("DELETE FROM dm_notes WHERE campaign_id = ?"), (campaign_id,))
+                        conn.execute(data._q("DELETE FROM campaign_members WHERE campaign_id = ?"), (campaign_id,))
+                        conn.execute(data._q("DELETE FROM campaigns WHERE id = ?"), (campaign_id,))
+                    if character_id is not None:
+                        conn.execute(data._q("DELETE FROM campaign_members WHERE character_id = ?"), (character_id,))
+                        conn.execute(data._q("DELETE FROM characters WHERE id = ?"), (character_id,))
+                    if user_id is not None:
+                        conn.execute(data._q("DELETE FROM campaign_members WHERE user_id = ?"), (user_id,))
+                        conn.execute(data._q("DELETE FROM users WHERE id = ?"), (user_id,))
+                    conn.commit()
+        finally:
+            data.close_database_connections()
 
 
 if __name__ == "__main__":

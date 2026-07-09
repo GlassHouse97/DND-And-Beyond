@@ -271,6 +271,14 @@ def _get_pool():
     return _pg_pool
 
 
+def close_database_connections() -> None:
+    """Close pooled Postgres connections for one-off scripts and tests."""
+    global _pg_pool
+    if _pg_pool is not None:
+        _pg_pool.close()
+        _pg_pool = None
+
+
 def _migrate_legacy_data_dir() -> None:
     """Copy old repo-local runtime files to the external data directory once."""
     if DB_PATH != DEFAULT_DB_PATH:
