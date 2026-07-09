@@ -49,20 +49,38 @@ function Invoke-Gcloud {
     if ($LASTEXITCODE -ne 0) { Write-Error "gcloud $($GcloudArgs[0]) failed" }
 }
 
+function Invoke-GcloudOptional {
+    param([string[]]$GcloudArgs)
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & gcloud @GcloudArgs 2>$null
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    [PSCustomObject]@{
+        ExitCode = $exitCode
+        Output = $output
+    }
+}
+
 Write-Host "==> Configuring project $ProjectId" -ForegroundColor Cyan
 Invoke-Gcloud @("config", "set", "project", $ProjectId)
 Invoke-Gcloud @("services", "enable", "run.googleapis.com", "cloudbuild.googleapis.com", "artifactregistry.googleapis.com")
 
 # Create the image repository if it does not exist yet.
-& gcloud artifacts repositories describe dnd-and-beyond --location $Region 2>$null
-if ($LASTEXITCODE -ne 0) {
+$repositoryCheck = Invoke-GcloudOptional @("artifacts", "repositories", "describe", "dnd-and-beyond", "--location", $Region)
+if ($repositoryCheck.ExitCode -ne 0) {
     Write-Host "==> Creating Artifact Registry repository" -ForegroundColor Cyan
     Invoke-Gcloud @("artifacts", "repositories", "create", "dnd-and-beyond", "--repository-format", "docker", "--location", $Region)
 }
 
 # If the service already exists we know its URL and can build correctly once.
-$serviceUrl = (& gcloud run services describe $ServiceName --region $Region --format "value(status.url)" 2>$null)
-if ($LASTEXITCODE -ne 0) { $serviceUrl = "" }
+$serviceCheck = Invoke-GcloudOptional @("run", "services", "describe", $ServiceName, "--region", $Region, "--format", "value(status.url)")
+$serviceUrl = $serviceCheck.Output | Select-Object -First 1
+if ($serviceCheck.ExitCode -ne 0) { $serviceUrl = "" }
 $firstDeploy = [string]::IsNullOrWhiteSpace($serviceUrl)
 if ($firstDeploy) {
     $serviceUrl = "http://localhost:8080"  # placeholder for the bootstrap build
