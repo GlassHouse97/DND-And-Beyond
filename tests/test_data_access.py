@@ -75,6 +75,8 @@ def test_verified_user_sees_only_their_characters_and_campaign_roles(tmp_path, m
         "shield": False,
         "skills": "Athletics, Survival",
         "saves": "Strength, Constitution",
+        "weapons": "Longsword, Handaxe",
+        "spells": "",
         "notes": "Now level 3",
     }
     assert data_access.update_character(character_id, dm["id"], updated_fields) is False
@@ -84,6 +86,8 @@ def test_verified_user_sees_only_their_characters_and_campaign_roles(tmp_path, m
     assert edited["level"] == 3
     assert edited["strength"] == 16
     assert edited["has_shield"] == 0
+    assert edited["weapons"] == "Longsword, Handaxe"
+    assert edited["spells"] == ""
 
     # Deleting is owner-only and detaches the character from campaign rosters.
     assert data_access.delete_character(character_id, dm["id"]) is False

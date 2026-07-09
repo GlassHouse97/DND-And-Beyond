@@ -17,6 +17,13 @@ import reflex as rx
 
 from dnd_and_beyond import data_access
 from dnd_and_beyond.email_service import EmailDeliveryError, send_verification_email
+from dnd_and_beyond.srd_catalog import (
+    SPELLS,
+    WEAPONS,
+    describe_spell,
+    describe_weapon,
+    spells_for_class,
+)
 from dnd_and_beyond.rules_math import (
     ARMOR,
     SKILL_ABILITIES,
@@ -280,6 +287,8 @@ def _character_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "shield": bool(row["has_shield"]),
         "skills": row["skill_proficiencies"],
         "saves": row["save_proficiencies"],
+        "weapons": row.get("weapons") or "",
+        "spells": row.get("spells") or "",
         "notes": row["notes"],
         "campaign_names": row.get("campaign_names", ""),
     }
@@ -327,6 +336,10 @@ class AppState(rx.State):
     # Bumped whenever the builder is (re)filled so uncontrolled inputs remount
     # and pick up fresh default values.
     builder_form_nonce: int = 0
+    # The builder is a 3-step wizard: 1 Identity, 2 Abilities, 3 Combat & Gear.
+    builder_step: int = 1
+    builder_weapon_selection: list[str] = []
+    builder_spell_selection: list[str] = []
     builder_name: str = ""
     builder_level: str = "1"
     builder_armor: str = "chain mail"
@@ -549,6 +562,9 @@ class AppState(rx.State):
 
     def set_builder_class(self, character_class: str) -> None:
         self.builder_class = character_class if character_class in CLASS_OPTIONS else "Fighter"
+        # Spells the new class can't cast fall out of the selection.
+        allowed = {spell.name for spell in spells_for_class(self.builder_class)}
+        self.builder_spell_selection = [name for name in self.builder_spell_selection if name in allowed]
         if self.builder_mode == "edit":
             # Editing an existing hero: changing class must not wipe their scores.
             return
@@ -579,6 +595,36 @@ class AppState(rx.State):
         else:
             selected.add(label)
         self.builder_skill_selection = [name for name in SKILL_LABELS_ORDERED if name in selected]
+
+    def set_builder_name(self, value: str) -> None:
+        self.builder_name = value.strip()
+
+    def set_builder_notes(self, value: str) -> None:
+        self.builder_notes = value
+
+    def toggle_builder_weapon(self, name: str) -> None:
+        if name not in WEAPONS:
+            return
+        selected = set(self.builder_weapon_selection)
+        selected.discard(name) if name in selected else selected.add(name)
+        self.builder_weapon_selection = [w for w in sorted(WEAPONS) if w in selected]
+
+    def toggle_builder_spell(self, name: str) -> None:
+        if name not in SPELLS:
+            return
+        selected = set(self.builder_spell_selection)
+        selected.discard(name) if name in selected else selected.add(name)
+        ordered = sorted(selected, key=lambda s: (SPELLS[s].level, s))
+        self.builder_spell_selection = ordered
+
+    def set_builder_step(self, step: int) -> None:
+        self.builder_step = max(1, min(3, int(step)))
+
+    def builder_continue(self) -> None:
+        self.set_builder_step(self.builder_step + 1)
+
+    def builder_back(self) -> None:
+        self.set_builder_step(self.builder_step - 1)
 
     def set_half_elf_bonus_one(self, label: str) -> None:
         ability = ABILITY_KEYS_BY_LABEL.get(label, "dex")
@@ -633,6 +679,9 @@ class AppState(rx.State):
         self.builder_saves = CLASS_SAVE_PROFICIENCIES["Fighter"]
         self.builder_half_elf_bonus_one = "dex"
         self.builder_half_elf_bonus_two = "con"
+        self.builder_weapon_selection = []
+        self.builder_spell_selection = []
+        self.builder_step = 1
         self.builder_form_nonce += 1
 
     def start_new_character(self) -> None:
@@ -672,6 +721,16 @@ class AppState(rx.State):
         # them as final values and never re-applies bonuses on save.
         self.builder_scores = {key: str(character[key]) for key in ABILITY_KEYS}
         self.builder_saves = character["saves"]
+        self.builder_weapon_selection = [
+            w for w in sorted(WEAPONS)
+            if w.lower() in {part.strip().lower() for part in str(character.get("weapons", "")).split(",")}
+        ]
+        known_spells = {part.strip().lower() for part in str(character.get("spells", "")).split(",")}
+        self.builder_spell_selection = sorted(
+            (s for s in SPELLS if s.lower() in known_spells),
+            key=lambda s: (SPELLS[s].level, s),
+        )
+        self.builder_step = 1
         self.builder_form_nonce += 1
         self.go("builder")
 
@@ -702,21 +761,15 @@ class AppState(rx.State):
         self.load_user_data()
         self.app_message = f"{name} was deleted and removed from their campaigns."
 
-    def create_character(self, form_data: dict[str, Any]) -> None:
+    def save_character(self) -> None:
+        """Create or update a character entirely from the wizard's state."""
         if not self.is_authenticated:
             self.go("auth")
             return
         editing = self.builder_mode == "edit" and self.editing_character_id
-        ancestry = form_data.get("ancestry") or self.builder_ancestry
-        character_class = form_data.get("character_class") or self.builder_class
-        default_scores = _recommended_standard_array(character_class)
+        default_scores = _recommended_standard_array(self.builder_class)
         base_scores = {
-            key: _safe_int(
-                form_data.get(key, self.builder_scores.get(key)),
-                default_scores[key],
-                minimum=1,
-                maximum=30,
-            )
+            key: _safe_int(self.builder_scores.get(key), default_scores[key], minimum=1, maximum=30)
             for key in ABILITY_KEYS
         }
         if editing:
@@ -724,7 +777,7 @@ class AppState(rx.State):
             scores = base_scores
         else:
             scores = _apply_ancestry_bonuses(
-                ancestry,
+                self.builder_ancestry,
                 base_scores,
                 self.builder_half_elf_bonus_one,
                 self.builder_half_elf_bonus_two,
@@ -733,17 +786,19 @@ class AppState(rx.State):
         if self.builder_skill_extra.strip():
             skill_entries.append(self.builder_skill_extra.strip())
         character = {
-            "name": form_data.get("name", "Unnamed Hero").strip() or "Unnamed Hero",
-            "ancestry": ancestry,
-            "character_class": character_class,
-            "background": form_data.get("background") or self.builder_background,
-            "level": _safe_int(form_data.get("level"), 1, minimum=1, maximum=20),
+            "name": self.builder_name.strip() or "Unnamed Hero",
+            "ancestry": self.builder_ancestry,
+            "character_class": self.builder_class,
+            "background": self.builder_background,
+            "level": _safe_int(self.builder_level, 1, minimum=1, maximum=20),
             **scores,
-            "armor": form_data.get("armor", "none"),
-            "shield": form_data.get("shield", "off") == "on",
+            "armor": self.builder_armor,
+            "shield": self.builder_shield,
             "skills": ", ".join(skill_entries) or "Perception",
-            "saves": form_data.get("saves") or self.builder_saves,
-            "notes": form_data.get("notes", ""),
+            "saves": self.builder_saves,
+            "weapons": ", ".join(self.builder_weapon_selection),
+            "spells": ", ".join(self.builder_spell_selection),
+            "notes": self.builder_notes,
         }
         if editing:
             if not data_access.update_character(self.editing_character_id, self.user_id, character):
@@ -756,6 +811,7 @@ class AppState(rx.State):
             character_id = data_access.create_character(self.user_id, character)
             self.selected_character_id = character_id
             self.app_message = f"{character['name']} was saved to {self.user_email}."
+            self._reset_builder()
         self.load_user_data()
         self.current_view = "sheet"
 
@@ -1206,6 +1262,113 @@ class AppState(rx.State):
             bonus = format_bonus(ability_modifier(scores[ability]) + prof) if ability else ""
             rows.append({"label": label, "bonus": bonus})
         return rows
+
+    @rx.var
+    def builder_weapon_rows(self) -> list[dict[str, Any]]:
+        """Every catalog weapon with this character's real attack math."""
+        scores = self.builder_final_scores
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        rows = []
+        for name in sorted(WEAPONS):
+            weapon = WEAPONS[name]
+            info = describe_weapon(weapon, scores, level)
+            rows.append(
+                {
+                    "name": name,
+                    "selected": name in self.builder_weapon_selection,
+                    "attack_bonus": info["attack_bonus"],
+                    "summary": f"{info['damage']} · uses {info['uses']} · {weapon.category}",
+                    "text": info["text"],
+                }
+            )
+        return rows
+
+    @rx.var
+    def builder_spell_rows(self) -> list[dict[str, Any]]:
+        """The current class's spell list with this character's real numbers."""
+        scores = self.builder_final_scores
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        rows = []
+        for spell in sorted(spells_for_class(self.builder_class), key=lambda s: (s.level, s.name)):
+            info = describe_spell(spell, self.builder_class, level, scores)
+            rows.append(
+                {
+                    "name": spell.name,
+                    "selected": spell.name in self.builder_spell_selection,
+                    "level_label": info["level_label"],
+                    "headline": info["headline"],
+                    "summary": f"{spell.school} · {info['meta']}",
+                    "text": info["text"],
+                }
+            )
+        return rows
+
+    @rx.var
+    def builder_class_is_caster(self) -> bool:
+        return len(spells_for_class(self.builder_class)) > 0
+
+    @rx.var
+    def builder_spell_hint(self) -> str:
+        if not self.builder_class_is_caster:
+            return f"{self.builder_class}s fight with weapons instead of spells — nothing to pick here."
+        if self.builder_class in ("Paladin", "Ranger"):
+            return f"{self.builder_class}s unlock spellcasting at level 2. Pick what you'll learn — cantrip rows don't apply."
+        return "Cantrips cast for free, any time. Leveled spells use spell slots, which come back after a long rest."
+
+    @rx.var
+    def builder_loadout_summary(self) -> str:
+        weapons = ", ".join(self.builder_weapon_selection) or "no weapons yet"
+        if not self.builder_class_is_caster:
+            return f"Carrying: {weapons}."
+        spells = ", ".join(self.builder_spell_selection) or "no spells yet"
+        return f"Carrying: {weapons}. Spellbook: {spells}."
+
+    @rx.var
+    def sheet_attack_rows(self) -> list[dict[str, Any]]:
+        """The selected character's attacks with computed to-hit and damage."""
+        character = self.primary_character
+        scores = {key: int(character[key]) for key in ABILITY_KEYS}
+        level = _safe_int(character["level"], 1, minimum=1, maximum=20)
+        chosen = [part.strip() for part in str(character.get("weapons", "")).split(",") if part.strip()]
+        rows = []
+        for name in chosen:
+            weapon = WEAPONS.get(name)
+            if weapon is None:
+                continue
+            info = describe_weapon(weapon, scores, level)
+            rows.append({"name": name, "attack_bonus": info["attack_bonus"], "damage": info["damage"], "text": info["text"]})
+        return rows
+
+    @rx.var
+    def sheet_spell_rows(self) -> list[dict[str, Any]]:
+        """The selected character's spells with computed DCs and dice."""
+        character = self.primary_character
+        klass = character["character_class"] or "Fighter"
+        scores = {key: int(character[key]) for key in ABILITY_KEYS}
+        level = _safe_int(character["level"], 1, minimum=1, maximum=20)
+        chosen = [part.strip() for part in str(character.get("spells", "")).split(",") if part.strip()]
+        rows = []
+        for name in sorted((n for n in chosen if n in SPELLS), key=lambda n: (SPELLS[n].level, n)):
+            spell = SPELLS[name]
+            info = describe_spell(spell, klass, level, scores)
+            rows.append(
+                {
+                    "name": name,
+                    "level_label": info["level_label"],
+                    "headline": info["headline"],
+                    "summary": f"{spell.school} · {info['meta']}",
+                    "text": info["text"],
+                }
+            )
+        return rows
+
+    @rx.var
+    def sheet_has_attacks(self) -> bool:
+        return len(self.sheet_attack_rows) > 0
+
+    @rx.var
+    def sheet_has_spells(self) -> bool:
+        return len(self.sheet_spell_rows) > 0
 
     @rx.var
     def builder_armor_text(self) -> str:

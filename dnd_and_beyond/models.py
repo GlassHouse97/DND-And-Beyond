@@ -29,6 +29,8 @@ class Character(rx.Model, table=True):
     has_shield: bool = False
     skill_proficiencies: str = ""
     save_proficiencies: str = ""
+    weapons: str = ""
+    spells: str = ""
     notes: str = ""
 
 

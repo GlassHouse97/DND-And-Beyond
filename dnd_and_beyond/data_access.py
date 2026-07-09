@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS characters (
     has_shield INTEGER NOT NULL DEFAULT 0,
     skill_proficiencies TEXT NOT NULL DEFAULT '',
     save_proficiencies TEXT NOT NULL DEFAULT '',
+    weapons TEXT NOT NULL DEFAULT '',
+    spells TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT ''
 );
 
@@ -241,12 +243,16 @@ MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE users ADD COLUMN verification_token TEXT",
     "ALTER TABLE users ADD COLUMN created_at TEXT NOT NULL DEFAULT '2026-01-01 00:00:00'",
+    "ALTER TABLE characters ADD COLUMN weapons TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE characters ADD COLUMN spells TEXT NOT NULL DEFAULT ''",
 )
 
 POSTGRES_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT '2026-01-01 00:00:00'",
+    "ALTER TABLE characters ADD COLUMN IF NOT EXISTS weapons TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE characters ADD COLUMN IF NOT EXISTS spells TEXT NOT NULL DEFAULT ''",
 )
 
 # One-time data migrations, tracked by version in app_meta so they never re-run.
@@ -521,9 +527,9 @@ def create_character(user_id: int, character: dict[str, Any]) -> int:
             INSERT INTO characters (
                 owner_user_id, name, ancestry, character_class, background, level,
                 strength, dexterity, constitution, intelligence, wisdom, charisma,
-                armor_name, has_shield, skill_proficiencies, save_proficiencies, notes
+                armor_name, has_shield, skill_proficiencies, save_proficiencies, weapons, spells, notes
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -542,6 +548,8 @@ def create_character(user_id: int, character: dict[str, Any]) -> int:
                 1 if character["shield"] else 0,
                 character["skills"],
                 character["saves"],
+                character.get("weapons", ""),
+                character.get("spells", ""),
                 character["notes"],
             ),
         )
@@ -559,7 +567,8 @@ def update_character(character_id: int, owner_user_id: int, character: dict[str,
                 UPDATE characters SET
                     name = ?, ancestry = ?, character_class = ?, background = ?, level = ?,
                     strength = ?, dexterity = ?, constitution = ?, intelligence = ?, wisdom = ?, charisma = ?,
-                    armor_name = ?, has_shield = ?, skill_proficiencies = ?, save_proficiencies = ?, notes = ?
+                    armor_name = ?, has_shield = ?, skill_proficiencies = ?, save_proficiencies = ?,
+                    weapons = ?, spells = ?, notes = ?
                 WHERE id = ? AND owner_user_id = ?
                 """
             ),
@@ -579,6 +588,8 @@ def update_character(character_id: int, owner_user_id: int, character: dict[str,
                 1 if character["shield"] else 0,
                 character["skills"],
                 character["saves"],
+                character.get("weapons", ""),
+                character.get("spells", ""),
                 character["notes"],
                 character_id,
                 owner_user_id,
