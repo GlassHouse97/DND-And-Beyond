@@ -52,6 +52,7 @@ STOPSIGNAL SIGKILL
 
 EXPOSE $PORT
 
-CMD caddy start && \
-    redis-server --daemonize yes && \
+CMD caddy run --config /app/Caddyfile --adapter caddyfile & \
+    redis-server --save "" --appendonly no --protected-mode no & \
+    sleep 1 && \
     exec reflex run --env prod --backend-only
