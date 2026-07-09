@@ -1007,6 +1007,8 @@ class AppState(rx.State):
         return {
             "id": row["id"],
             "user_id": row.get("user_id", 0),
+            "display_name": row["display_name"],
+            "character_name": row.get("character") or "",
             "character": character_name,
             "class_level": class_level,
             "current_hp": current_hp,
@@ -1353,3 +1355,10 @@ class AppState(rx.State):
         active = len(self.party_members)
         hurt = len([m for m in self.party_members if _hp_state(m["current_hp"], m["max_hp"]) != "healthy"])
         return f"{active} characters, {hurt} need attention"
+
+    @rx.var
+    def member_summary(self) -> str:
+        total = len(self.members)
+        dms = len([m for m in self.members if m["role"] == "dm"])
+        players = total - dms
+        return f"{total} members — {dms} DM, {players} players"

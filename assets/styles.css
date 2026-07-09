@@ -751,6 +751,23 @@ select {
   border-radius: 8px;
 }
 
+.role-chip {
+  padding: 4px 10px;
+  background: #eadfc9;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.role-chip.dm {
+  background: var(--red);
+  border-color: var(--red-dark);
+  color: var(--cream);
+}
+
 .form-actions {
   margin-top: 20px;
   flex-wrap: wrap;

@@ -1090,26 +1090,47 @@ def campaign_hub() -> rx.Component:
             ),
             class_name="panel span-2",
         ),
-        rx.box(
-            rx.heading("Dice Roller", class_name="section-heading"),
-            rx.form(
-                rx.hstack(
-                    rx.input(name="count", default_value="1", class_name="dice-field"),
-                    rx.select(["d4", "d6", "d8", "d10", "d12", "d20", "d100"], name="die", default_value="d20", class_name="dice-field"),
-                    rx.input(name="modifier", default_value="0", class_name="dice-field"),
-                    rx.button(rx.icon("dice-5", size=18), type="submit", class_name="icon-button strong"),
-                    class_name="dice-row",
-                ),
-                on_submit=AppState.roll_dice,
-                reset_on_submit=False,
-            ),
-            rx.text(AppState.dice_result, class_name="dice-result"),
-            class_name="panel",
-        ),
+        campaign_members_panel(),
         my_character_panel(),
         columns="2",
         spacing="4",
         class_name="campaign-grid",
+    )
+
+
+def campaign_members_panel() -> rx.Component:
+    """Everyone in the campaign — DM first — with their character status."""
+    return rx.box(
+        rx.heading("Campaign Members", class_name="section-heading"),
+        rx.text(AppState.member_summary, class_name="hint"),
+        rx.foreach(AppState.members, campaign_member_row),
+        class_name="panel",
+    )
+
+
+def campaign_member_row(member: rx.Var[dict]) -> rx.Component:
+    return rx.hstack(
+        rx.vstack(
+            rx.text(member["display_name"], class_name="row-title"),
+            rx.cond(
+                member["character_name"] != "",
+                rx.text("Playing ", member["character_name"], " — ", member["class_level"], class_name="row-subtitle"),
+                rx.cond(
+                    member["role"] == "dm",
+                    rx.text("Runs the campaign", class_name="row-subtitle"),
+                    rx.text("No character attached yet", class_name="row-subtitle"),
+                ),
+            ),
+            spacing="0",
+            align="start",
+        ),
+        rx.spacer(),
+        rx.cond(
+            member["role"] == "dm",
+            rx.text("DM", class_name="role-chip dm"),
+            rx.text("Player", class_name="role-chip"),
+        ),
+        class_name="compact-row",
     )
 
 
