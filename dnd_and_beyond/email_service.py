@@ -17,6 +17,10 @@ from dnd_and_beyond.data_access import DB_PATH
 OUTBOX_PATH = DB_PATH.parent / "dev_email_outbox.log"
 
 
+class EmailDeliveryError(RuntimeError):
+    """Raised when a verification email cannot be delivered."""
+
+
 def send_verification_email(email: str, token: str) -> str:
     app_base_url = os.getenv("APP_BASE_URL", "http://localhost:3000").rstrip("/")
     verify_url = f"{app_base_url}/?verify_token={token}"
@@ -31,7 +35,16 @@ def send_verification_email(email: str, token: str) -> str:
 
     smtp_host = os.getenv("SMTP_HOST", "").strip()
     if smtp_host:
-        _send_smtp(email, subject, body)
+        try:
+            _send_smtp(email, subject, body)
+        except smtplib.SMTPAuthenticationError as exc:
+            raise EmailDeliveryError(
+                "Gmail rejected the SMTP login. Use a Gmail App Password in SMTP_PASSWORD, not your normal Google password."
+            ) from exc
+        except (OSError, smtplib.SMTPException) as exc:
+            raise EmailDeliveryError(
+                "Verification email could not be sent. Check the SMTP settings in the production environment."
+            ) from exc
         return "smtp"
 
     OUTBOX_PATH.parent.mkdir(parents=True, exist_ok=True)

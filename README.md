@@ -144,7 +144,15 @@ every restart.
    URL and Gmail SMTP values. For Gmail, create an
    [App Password](https://myaccount.google.com/apppasswords) (requires
    2-Step Verification) — never your real password.
-4. Verify the production database connection:
+4. Verify the production email login:
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\verify_smtp.py
+   ```
+
+   This should print `SMTP_OK`. If it prints `SMTP_AUTH_FAILED`, replace
+   `SMTP_PASSWORD` with a Gmail App Password.
+5. Verify the production database connection:
 
    ```powershell
    .\.venv\Scripts\python.exe scripts\verify_postgres.py
@@ -153,7 +161,7 @@ every restart.
    The script creates a uniquely named throwaway account, character, and
    campaign, verifies the core read paths, then deletes only those smoke-test
    records.
-5. Deploy:
+6. Deploy:
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts\deploy_cloudrun.ps1 -ProjectId your-project-id

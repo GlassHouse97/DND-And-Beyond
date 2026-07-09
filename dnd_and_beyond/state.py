@@ -16,7 +16,7 @@ from typing import Any
 import reflex as rx
 
 from dnd_and_beyond import data_access
-from dnd_and_beyond.email_service import send_verification_email
+from dnd_and_beyond.email_service import EmailDeliveryError, send_verification_email
 from dnd_and_beyond.rules_math import (
     ARMOR,
     SKILL_ABILITIES,
@@ -406,7 +406,12 @@ class AppState(rx.State):
 
         # Run the (potentially slow) email send off the event loop so one
         # registration can't stall every other connected player.
-        delivery = await asyncio.to_thread(send_verification_email, email, token)
+        try:
+            delivery = await asyncio.to_thread(send_verification_email, email, token)
+        except EmailDeliveryError as exc:
+            self.auth_mode = "verify"
+            self.auth_message = f"Account created, but the verification email failed: {exc}"
+            return
         self.auth_mode = "verify"
         self.auth_message = (
             "Verification email sent. For local testing, open "
