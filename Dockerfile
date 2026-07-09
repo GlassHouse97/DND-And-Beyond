@@ -15,9 +15,9 @@ FROM python:3.13-bookworm
 
 # Reflex needs Node 22.12+ to initialize and build the frontend.
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
-COPY --from=node /usr/local/bin/npm /usr/local/bin/npm
-COPY --from=node /usr/local/bin/npx /usr/local/bin/npx
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 # Render expects 10000; Railway respects $PORT automatically.
 ARG PORT=8080
