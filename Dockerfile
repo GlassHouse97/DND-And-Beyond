@@ -47,12 +47,11 @@ RUN reflex export --frontend-only --no-zip && mv .web/build/client/* /srv/ && rm
 # Persistent data lives on the platform volume mounted here.
 RUN mkdir -p /data
 
+RUN sed -i 's/\r$//' /app/cloudrun_start.sh && chmod +x /app/cloudrun_start.sh
+
 # Needed until Reflex properly passes SIGTERM on backend.
 STOPSIGNAL SIGKILL
 
 EXPOSE $PORT
 
-CMD caddy run --config /app/Caddyfile --adapter caddyfile & \
-    redis-server --save "" --appendonly no --protected-mode no & \
-    sleep 1 && \
-    exec reflex run --env prod --backend-only
+CMD ["/app/cloudrun_start.sh"]
