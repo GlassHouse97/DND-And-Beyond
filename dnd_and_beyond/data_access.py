@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 import threading
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -150,6 +151,15 @@ CREATE TABLE IF NOT EXISTS initiative_combatants (
     turn_order INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS join_requests (
+    {id_column},
+    campaign_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    {created_at_column},
+    resolved_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -212,6 +222,8 @@ CREATE INDEX IF NOT EXISTS idx_members_user ON campaign_members (user_id);
 CREATE INDEX IF NOT EXISTS idx_members_character ON campaign_members (character_id);
 CREATE INDEX IF NOT EXISTS idx_npcs_campaign ON npcs (campaign_id);
 CREATE INDEX IF NOT EXISTS idx_dm_notes_campaign ON dm_notes (campaign_id);
+CREATE INDEX IF NOT EXISTS idx_join_requests_campaign ON join_requests (campaign_id);
+CREATE INDEX IF NOT EXISTS idx_join_requests_user ON join_requests (user_id);
 """
 
 SCHEMA_SQL = SCHEMA_TEMPLATE.format(
@@ -735,6 +747,131 @@ def assign_character_to_campaign(
     if rowcount == 0:
         return False, "not_a_member"
     return True, "assigned"
+
+
+def list_public_campaigns(user_id: int) -> list[dict[str, Any]]:
+    """Every campaign on the server, WITHOUT invite codes, plus the viewer's
+    relationship to each: 'member', 'pending' (join request awaiting the DM),
+    or 'none'."""
+    initialize_database()
+    with connect() as conn:
+        rows = conn.execute(
+            _q(
+                """
+                SELECT
+                    ca.id,
+                    ca.name,
+                    ca.next_session,
+                    COALESCE(dm.display_name, 'Unknown DM') AS dm_name,
+                    (SELECT COUNT(*) FROM campaign_members cm2 WHERE cm2.campaign_id = ca.id) AS member_count,
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1 FROM campaign_members cm3
+                            WHERE cm3.campaign_id = ca.id AND cm3.user_id = ?
+                        ) THEN 'member'
+                        WHEN EXISTS (
+                            SELECT 1 FROM join_requests jr
+                            WHERE jr.campaign_id = ca.id AND jr.user_id = ? AND jr.status = 'pending'
+                        ) THEN 'pending'
+                        ELSE 'none'
+                    END AS my_status
+                FROM campaigns ca
+                LEFT JOIN users dm ON dm.id = ca.host_user_id
+                ORDER BY ca.id DESC
+                """
+            ),
+            (user_id, user_id),
+        ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def create_join_request(campaign_id: int, user_id: int) -> tuple[bool, str]:
+    """Ask to join a campaign; the DM must approve before membership exists."""
+    initialize_database()
+    with connect() as conn:
+        campaign = conn.execute(_q("SELECT id FROM campaigns WHERE id = ?"), (campaign_id,)).fetchone()
+        if campaign is None:
+            return False, "not_found"
+        member = conn.execute(
+            _q("SELECT id FROM campaign_members WHERE campaign_id = ? AND user_id = ?"),
+            (campaign_id, user_id),
+        ).fetchone()
+        if member:
+            return False, "already_member"
+        pending = conn.execute(
+            _q("SELECT id FROM join_requests WHERE campaign_id = ? AND user_id = ? AND status = 'pending'"),
+            (campaign_id, user_id),
+        ).fetchone()
+        if pending:
+            return False, "already_requested"
+        # A fresh row per request keeps declined history; re-requesting after
+        # a decline is allowed.
+        conn.execute(
+            _q("INSERT INTO join_requests (campaign_id, user_id, status) VALUES (?, ?, 'pending')"),
+            (campaign_id, user_id),
+        )
+        conn.commit()
+    return True, "requested"
+
+
+def list_pending_join_requests(campaign_id: int) -> list[dict[str, Any]]:
+    initialize_database()
+    with connect() as conn:
+        rows = conn.execute(
+            _q(
+                """
+                SELECT jr.id, jr.user_id, jr.created_at, u.display_name, u.email
+                FROM join_requests jr
+                JOIN users u ON u.id = jr.user_id
+                WHERE jr.campaign_id = ? AND jr.status = 'pending'
+                ORDER BY jr.id
+                """
+            ),
+            (campaign_id,),
+        ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def resolve_join_request(request_id: int, dm_user_id: int, approve: bool) -> tuple[bool, str]:
+    """Approve or decline a pending request. Only the campaign's DM may do this;
+    approval creates the player membership (character attached afterward)."""
+    initialize_database()
+    resolved_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with connect() as conn:
+        request = conn.execute(
+            _q("SELECT id, campaign_id, user_id, status FROM join_requests WHERE id = ?"),
+            (request_id,),
+        ).fetchone()
+        if request is None or request["status"] != "pending":
+            return False, "not_found"
+        dm = conn.execute(
+            _q("SELECT id FROM campaign_members WHERE campaign_id = ? AND user_id = ? AND role = 'dm'"),
+            (request["campaign_id"], dm_user_id),
+        ).fetchone()
+        if dm is None:
+            return False, "not_dm"
+        new_status = "approved" if approve else "declined"
+        conn.execute(
+            _q("UPDATE join_requests SET status = ?, resolved_at = ? WHERE id = ?"),
+            (new_status, resolved_at, request_id),
+        )
+        if approve:
+            member = conn.execute(
+                _q("SELECT id FROM campaign_members WHERE campaign_id = ? AND user_id = ?"),
+                (request["campaign_id"], request["user_id"]),
+            ).fetchone()
+            if member is None:
+                conn.execute(
+                    _q(
+                        """
+                        INSERT INTO campaign_members (campaign_id, user_id, character_id, role, current_hp, location, active_conditions)
+                        VALUES (?, ?, NULL, 'player', ?, 'Not assigned yet', '')
+                        """
+                    ),
+                    (request["campaign_id"], request["user_id"], HP_UNSET),
+                )
+        conn.commit()
+    return True, new_status
 
 
 def update_member_hp(member_id: int, current_hp: int) -> None:

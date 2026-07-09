@@ -94,3 +94,70 @@ def test_verified_user_sees_only_their_characters_and_campaign_roles(tmp_path, m
     )
     assert member["character_id"] is None
     assert member["current_hp"] == data_access.HP_UNSET
+
+
+def test_campaign_directory_and_join_request_flow(tmp_path, monkeypatch):
+    monkeypatch.setattr(data_access, "DB_PATH", tmp_path / "app.db")
+
+    data_access.create_user("dm@example.com", "hash-1", "The DM", "t-dm")
+    data_access.verify_user_email("dm@example.com", "t-dm")
+    dm = data_access.get_user_by_email("dm@example.com")
+    data_access.create_user("newbie@example.com", "hash-2", "Newbie", "t-newbie")
+    data_access.verify_user_email("newbie@example.com", "t-newbie")
+    newbie = data_access.get_user_by_email("newbie@example.com")
+
+    campaign_id = data_access.create_campaign(dm["id"], "Open Table", "Sunday", "OPEN-9999")
+
+    # The directory shows the campaign to outsiders WITHOUT the invite code.
+    listing = data_access.list_public_campaigns(newbie["id"])
+    entry = next(c for c in listing if c["id"] == campaign_id)
+    assert entry["dm_name"] == "The DM"
+    assert entry["member_count"] == 1
+    assert entry["my_status"] == "none"
+    assert "invite_code" not in entry
+
+    # Members see themselves as members; the DM is a member.
+    assert next(c for c in data_access.list_public_campaigns(dm["id"]))["my_status"] == "member"
+
+    # Request lifecycle: request -> pending -> duplicate blocked.
+    ok, reason = data_access.create_join_request(campaign_id, newbie["id"])
+    assert ok and reason == "requested"
+    ok, reason = data_access.create_join_request(campaign_id, newbie["id"])
+    assert not ok and reason == "already_requested"
+    assert next(c for c in data_access.list_public_campaigns(newbie["id"]))["my_status"] == "pending"
+
+    requests = data_access.list_pending_join_requests(campaign_id)
+    assert len(requests) == 1 and requests[0]["display_name"] == "Newbie"
+    request_id = requests[0]["id"]
+
+    # Only the DM can resolve.
+    ok, reason = data_access.resolve_join_request(request_id, newbie["id"], approve=True)
+    assert not ok and reason == "not_dm"
+
+    # Approval creates the membership as a player with no character yet.
+    ok, reason = data_access.resolve_join_request(request_id, dm["id"], approve=True)
+    assert ok and reason == "approved"
+    member = next(
+        m for m in data_access.list_campaign_members(campaign_id) if m["user_id"] == newbie["id"]
+    )
+    assert member["role"] == "player" and member["character_id"] is None
+    assert next(c for c in data_access.list_public_campaigns(newbie["id"]))["my_status"] == "member"
+    assert data_access.list_pending_join_requests(campaign_id) == []
+
+    # A resolved request cannot be resolved again; members cannot re-request.
+    ok, reason = data_access.resolve_join_request(request_id, dm["id"], approve=False)
+    assert not ok and reason == "not_found"
+    ok, reason = data_access.create_join_request(campaign_id, newbie["id"])
+    assert not ok and reason == "already_member"
+
+    # Decline path: a third user gets declined, then may ask again.
+    data_access.create_user("later@example.com", "hash-3", "Later Larry", "t-later")
+    data_access.verify_user_email("later@example.com", "t-later")
+    larry = data_access.get_user_by_email("later@example.com")
+    data_access.create_join_request(campaign_id, larry["id"])
+    larry_request = data_access.list_pending_join_requests(campaign_id)[0]["id"]
+    ok, reason = data_access.resolve_join_request(larry_request, dm["id"], approve=False)
+    assert ok and reason == "declined"
+    assert not any(m["user_id"] == larry["id"] for m in data_access.list_campaign_members(campaign_id))
+    ok, reason = data_access.create_join_request(campaign_id, larry["id"])
+    assert ok and reason == "requested"

@@ -350,6 +350,9 @@ class AppState(rx.State):
     npcs: list[dict[str, Any]] = []
     initiative: list[dict[str, Any]] = []
     dm_notes: str = ""
+    public_campaigns: list[dict[str, Any]] = []
+    join_requests: list[dict[str, Any]] = []
+    browse_message: str = ""
 
     def restore_session(self) -> None:
         """Re-authenticate from the signed browser token so refreshes keep you logged in.
@@ -474,6 +477,9 @@ class AppState(rx.State):
         self.npcs = []
         self.initiative = []
         self.dm_notes = ""
+        self.public_campaigns = []
+        self.join_requests = []
+        self.browse_message = ""
         self.current_view = "auth"
 
     def load_user_data(self) -> None:
@@ -481,6 +487,7 @@ class AppState(rx.State):
             return
         self.characters = [_character_from_row(row) for row in data_access.list_user_characters(self.user_id)]
         self.campaigns = data_access.list_user_campaigns(self.user_id)
+        self.public_campaigns = data_access.list_public_campaigns(self.user_id)
         campaign_ids = [int(row["id"]) for row in self.campaigns]
         current_id = int(self.campaign.get("id") or 0)
         if campaign_ids:
@@ -506,7 +513,12 @@ class AppState(rx.State):
         self.members = [self._member_view(row) for row in data_access.list_campaign_members(campaign_id)]
         self.npcs = [self._npc_view(row) for row in data_access.list_campaign_npcs(campaign_id)]
         self.initiative = self._initiative_from_campaign()
-        self.dm_notes = data_access.get_dm_notes(campaign_id) if selected.get("role") == "dm" else ""
+        if selected.get("role") == "dm":
+            self.dm_notes = data_access.get_dm_notes(campaign_id)
+            self.join_requests = data_access.list_pending_join_requests(campaign_id)
+        else:
+            self.dm_notes = ""
+            self.join_requests = []
 
     def open_campaign(self, campaign_id: int) -> None:
         self.select_campaign(campaign_id)
@@ -820,6 +832,46 @@ class AppState(rx.State):
             return
         self.app_message = f"{self.assign_character_choice} is now playing in {self.campaign['name']}."
         self.load_user_data()
+
+    def request_to_join(self, campaign_id: int) -> None:
+        """Ask a campaign's DM for membership from the browse list."""
+        if not self.is_authenticated:
+            self.go("auth")
+            return
+        ok, reason = data_access.create_join_request(int(campaign_id), self.user_id)
+        if reason == "requested":
+            self.browse_message = "Request sent! The DM will see it in their campaign view."
+        elif reason == "already_requested":
+            self.browse_message = "You already have a pending request for that campaign."
+        elif reason == "already_member":
+            self.browse_message = "You are already in that campaign."
+        else:
+            self.browse_message = "That campaign no longer exists."
+        self.public_campaigns = data_access.list_public_campaigns(self.user_id)
+
+    def approve_join_request(self, request_id: int) -> None:
+        self._resolve_join_request(int(request_id), approve=True)
+
+    def decline_join_request(self, request_id: int) -> None:
+        self._resolve_join_request(int(request_id), approve=False)
+
+    def _resolve_join_request(self, request_id: int, approve: bool) -> None:
+        ok, reason = data_access.resolve_join_request(request_id, self.user_id, approve)
+        if not ok:
+            self.app_message = (
+                "Only the campaign's DM can decide join requests."
+                if reason == "not_dm"
+                else "That request is no longer pending."
+            )
+            return
+        self.app_message = (
+            "Request approved — they're in the party! They can attach a character from the campaign page."
+            if approve
+            else "Request declined."
+        )
+        campaign_id = int(self.campaign.get("id") or 0)
+        if campaign_id:
+            self.select_campaign(campaign_id)
 
     def save_shared_notes(self, value: str) -> None:
         campaign_id = int(self.campaign.get("id") or 0)
@@ -1218,6 +1270,14 @@ class AppState(rx.State):
     @rx.var
     def has_campaign_character(self) -> bool:
         return bool(self.campaign.get("my_character_id"))
+
+    @rx.var
+    def has_public_campaigns(self) -> bool:
+        return len(self.public_campaigns) > 0
+
+    @rx.var
+    def pending_request_count(self) -> int:
+        return len(self.join_requests)
 
     @rx.var
     def character_choices(self) -> list[str]:

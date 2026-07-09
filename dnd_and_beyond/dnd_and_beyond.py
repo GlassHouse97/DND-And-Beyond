@@ -200,9 +200,64 @@ def dashboard() -> rx.Component:
                 spacing="4",
                 class_name="two-col",
             ),
+            browse_campaigns_panel(),
             rx.grid(host_campaign_panel(), join_campaign_panel(), columns="2", spacing="4", class_name="two-col"),
             spacing="5",
         )
+    )
+
+
+def browse_campaigns_panel() -> rx.Component:
+    """Directory of every campaign on the server, with request-to-join gating."""
+    return rx.box(
+        rx.text("CAMPAIGN DIRECTORY", class_name="eyebrow"),
+        rx.text(
+            "Every active campaign. Ask to join and the DM approves you — or use an invite code below for instant access.",
+            class_name="hint",
+        ),
+        rx.cond(
+            AppState.has_public_campaigns,
+            rx.vstack(rx.foreach(AppState.public_campaigns, public_campaign_row), spacing="2", align="stretch"),
+            empty_state("No campaigns yet", "Be the first: host a campaign below and it will show up here for everyone."),
+        ),
+        rx.text(AppState.browse_message, class_name="form-note"),
+        class_name="panel",
+    )
+
+
+def public_campaign_row(campaign: rx.Var[dict]) -> rx.Component:
+    return rx.hstack(
+        rx.vstack(
+            rx.text(campaign["name"], class_name="row-title"),
+            rx.text(
+                "DM: ", campaign["dm_name"],
+                " · ", campaign["member_count"], " members",
+                class_name="row-subtitle",
+            ),
+            rx.cond(
+                campaign["next_session"] != "",
+                rx.text("Next session: ", campaign["next_session"], class_name="row-subtitle"),
+                rx.fragment(),
+            ),
+            spacing="0",
+            align="start",
+        ),
+        rx.spacer(),
+        rx.cond(
+            campaign["my_status"] == "member",
+            rx.button("Open", on_click=lambda: AppState.open_campaign(campaign["id"]), class_name="secondary-action"),
+            rx.cond(
+                campaign["my_status"] == "pending",
+                rx.text("Request pending", class_name="condition-chip"),
+                rx.button(
+                    rx.icon("hand", size=16),
+                    rx.text("Request to Join"),
+                    on_click=lambda: AppState.request_to_join(campaign["id"]),
+                    class_name="primary-action",
+                ),
+            ),
+        ),
+        class_name="compact-row",
     )
 
 
@@ -296,11 +351,10 @@ def host_campaign_panel() -> rx.Component:
 
 def join_campaign_panel() -> rx.Component:
     return rx.box(
-        rx.heading("Join a Campaign", class_name="section-heading"),
+        rx.heading("Have an Invite Code?", class_name="section-heading"),
         rx.vstack(
-            rx.text("1. Get the invite code from your DM (they can copy it from their campaign page).", class_name="hint"),
-            rx.text("2. Pick which character you're bringing — or skip it and attach one later.", class_name="hint"),
-            rx.text("3. Join, and the campaign hub opens with the party roster and shared notes.", class_name="hint"),
+            rx.text("An invite code from the DM gets you in instantly — no approval needed.", class_name="hint"),
+            rx.text("Pick which character you're bringing, or skip it and attach one later.", class_name="hint"),
             spacing="1",
             align="start",
         ),
@@ -1068,11 +1122,59 @@ def dm_view() -> rx.Component:
             rx.button("Initiative", on_click=AppState.set_dm_tab("initiative"), class_name=rx.cond(AppState.dm_tab == "initiative", "tab active", "tab")),
             class_name="segmented scroll-tabs",
         ),
+        rx.cond(
+            (AppState.dm_tab == "status") & (AppState.pending_request_count > 0),
+            join_requests_panel(),
+            rx.fragment(),
+        ),
         rx.cond(AppState.dm_tab == "status", party_status_board(), rx.fragment()),
         rx.cond(AppState.dm_tab == "notes", dm_notes_panel(), rx.fragment()),
         rx.cond(AppState.dm_tab == "npcs", npc_tracker(), rx.fragment()),
         rx.cond(AppState.dm_tab == "initiative", initiative_tracker(), rx.fragment()),
         spacing="4",
+    )
+
+
+def join_requests_panel() -> rx.Component:
+    """Pending join requests, shown to the DM at the top of the status view."""
+    return rx.box(
+        rx.hstack(
+            rx.heading("Join Requests", class_name="section-heading"),
+            rx.text(AppState.pending_request_count, class_name="metric-pill"),
+            spacing="2",
+            align="center",
+        ),
+        rx.text(
+            "These players asked to join from the campaign directory. Accepting adds them to the party — they attach a character afterward.",
+            class_name="hint",
+        ),
+        rx.foreach(AppState.join_requests, join_request_row),
+        class_name="panel",
+    )
+
+
+def join_request_row(request: rx.Var[dict]) -> rx.Component:
+    return rx.hstack(
+        rx.vstack(
+            rx.text(request["display_name"], class_name="row-title"),
+            rx.text(request["email"], class_name="row-subtitle"),
+            spacing="0",
+            align="start",
+        ),
+        rx.spacer(),
+        rx.button(
+            rx.icon("check", size=16),
+            rx.text("Accept"),
+            on_click=lambda: AppState.approve_join_request(request["id"]),
+            class_name="icon-button success",
+        ),
+        rx.button(
+            rx.icon("x", size=16),
+            rx.text("Decline"),
+            on_click=lambda: AppState.decline_join_request(request["id"]),
+            class_name="icon-button danger",
+        ),
+        class_name="compact-row",
     )
 
 
