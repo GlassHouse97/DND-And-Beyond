@@ -18,6 +18,9 @@ import reflex as rx
 from dnd_and_beyond import data_access
 from dnd_and_beyond.email_service import send_verification_email
 from dnd_and_beyond.rules_math import (
+    ARMOR,
+    SKILL_ABILITIES,
+    ability_modifier,
     armor_class,
     format_bonus,
     max_hp,
@@ -160,6 +163,16 @@ CLASS_SAVE_PROFICIENCIES: dict[str, str] = {
     "Warlock": "Wisdom, Charisma",
     "Wizard": "Intelligence, Wisdom",
 }
+
+
+SKILL_LABELS: dict[str, str] = {key: key.title() for key in SKILL_ABILITIES}
+SKILL_LABELS["sleight of hand"] = "Sleight of Hand"
+
+SKILL_LABELS_ORDERED: tuple[str, ...] = tuple(sorted(SKILL_LABELS.values()))
+SKILL_ABILITY_BY_LABEL: dict[str, str] = {SKILL_LABELS[key]: ability for key, ability in SKILL_ABILITIES.items()}
+SKILL_LABEL_BY_LOWER: dict[str, str] = {label.lower(): label for label in SKILL_LABELS_ORDERED}
+
+ARMOR_CHOICES: tuple[str, ...] = ("none", "leather", "studded leather", "scale mail", "half plate", "chain mail", "plate")
 
 
 def _recommended_standard_array(character_class: str) -> dict[str, int]:
@@ -309,6 +322,16 @@ class AppState(rx.State):
     selected_character_id: int = 0
     join_character_choice: str = ""
     assign_character_choice: str = ""
+    builder_mode: str = "create"
+    editing_character_id: int = 0
+    builder_name: str = ""
+    builder_level: str = "1"
+    builder_armor: str = "chain mail"
+    builder_shield: bool = True
+    builder_skill_selection: list[str] = ["Athletics", "Perception"]
+    # Custom proficiency text from older characters that predates the picker.
+    builder_skill_extra: str = ""
+    builder_notes: str = ""
     builder_ancestry: str = "Human"
     builder_class: str = "Fighter"
     builder_background: str = "Soldier"
@@ -341,6 +364,10 @@ class AppState(rx.State):
                 self.session_token = ""
                 self.current_view = "auth"
             return
+        if self.is_authenticated and self.user_id == int(user["id"]):
+            # Token revalidated; this session already has its data loaded, so
+            # don't redo the full multi-query load on every reconnect.
+            return
         self.user_id = int(user["id"])
         self.user_email = user["email"]
         self.display_name = user["display_name"]
@@ -355,7 +382,7 @@ class AppState(rx.State):
         elif self.auth_mode == "verify":
             self.verify_email(form_data)
         else:
-            self.login(form_data)
+            await self.login(form_data)
 
     async def register(self, form_data: dict[str, Any]) -> None:
         email = form_data.get("email", "").strip().lower()
@@ -366,7 +393,10 @@ class AppState(rx.State):
             return
 
         token = secrets.token_urlsafe(24)
-        created, reason = data_access.create_user(email, _hash_password(password), name, token)
+        # pbkdf2 with 260k iterations takes ~100-200ms; keep it off the event
+        # loop so one signup doesn't freeze every connected player.
+        password_hash = await asyncio.to_thread(_hash_password, password)
+        created, reason = data_access.create_user(email, password_hash, name, token)
         if not created:
             self.auth_message = "That email already has a verified account. Try logging in."
             return
@@ -394,11 +424,14 @@ class AppState(rx.State):
         else:
             self.auth_message = "That verification code did not match."
 
-    def login(self, form_data: dict[str, Any]) -> None:
+    async def login(self, form_data: dict[str, Any]) -> None:
         email = form_data.get("email", "").strip().lower()
         password = form_data.get("password", "")
         user = data_access.get_user_by_email(email)
-        if user is None or not _verify_password(password, user["password_hash"]):
+        password_ok = user is not None and await asyncio.to_thread(
+            _verify_password, password, user["password_hash"]
+        )
+        if not password_ok:
             self.auth_message = "Email or password was not recognized."
             return
         if not int(user["email_verified"]):
@@ -496,6 +529,9 @@ class AppState(rx.State):
 
     def set_builder_class(self, character_class: str) -> None:
         self.builder_class = character_class if character_class in CLASS_OPTIONS else "Fighter"
+        if self.builder_mode == "edit":
+            # Editing an existing hero: changing class must not wipe their scores.
+            return
         self.builder_scores = {
             key: str(value)
             for key, value in _recommended_standard_array(self.builder_class).items()
@@ -504,6 +540,25 @@ class AppState(rx.State):
 
     def set_builder_background(self, background: str) -> None:
         self.builder_background = background if background in BACKGROUND_OPTIONS else "Soldier"
+
+    def set_builder_level(self, value: str) -> None:
+        self.builder_level = str(_safe_int(value, 1, minimum=1, maximum=20))
+
+    def set_builder_armor(self, armor: str) -> None:
+        self.builder_armor = armor if armor in ARMOR_CHOICES else "none"
+
+    def set_builder_shield(self, checked: bool) -> None:
+        self.builder_shield = bool(checked)
+
+    def toggle_builder_skill(self, label: str) -> None:
+        if label not in SKILL_ABILITY_BY_LABEL:
+            return
+        selected = set(self.builder_skill_selection)
+        if label in selected:
+            selected.discard(label)
+        else:
+            selected.add(label)
+        self.builder_skill_selection = [name for name in SKILL_LABELS_ORDERED if name in selected]
 
     def set_half_elf_bonus_one(self, label: str) -> None:
         ability = ABILITY_KEYS_BY_LABEL.get(label, "dex")
@@ -541,10 +596,85 @@ class AppState(rx.State):
         self.selected_character_id = int(character_id)
         self.current_view = "sheet"
 
+    def _reset_builder(self) -> None:
+        self.builder_mode = "create"
+        self.editing_character_id = 0
+        self.builder_name = ""
+        self.builder_level = "1"
+        self.builder_armor = "chain mail"
+        self.builder_shield = True
+        self.builder_skill_selection = ["Athletics", "Perception"]
+        self.builder_skill_extra = ""
+        self.builder_notes = ""
+        self.builder_ancestry = "Human"
+        self.builder_class = "Fighter"
+        self.builder_background = "Soldier"
+        self.builder_scores = {key: str(value) for key, value in _recommended_standard_array("Fighter").items()}
+        self.builder_saves = CLASS_SAVE_PROFICIENCIES["Fighter"]
+        self.builder_half_elf_bonus_one = "dex"
+        self.builder_half_elf_bonus_two = "con"
+
+    def start_new_character(self) -> None:
+        self._reset_builder()
+        self.go("builder")
+
+    def start_edit_character(self, character_id: int) -> None:
+        """Open the builder pre-filled with an existing character."""
+        character = next((c for c in self.characters if int(c["id"]) == int(character_id)), None)
+        if character is None:
+            self.app_message = "That character could not be found."
+            return
+        self.builder_mode = "edit"
+        self.editing_character_id = int(character_id)
+        self.builder_name = character["name"]
+        self.builder_level = str(character["level"])
+        self.builder_armor = character["armor"] if character["armor"] in ARMOR_CHOICES else "none"
+        self.builder_shield = bool(character["shield"])
+        known_skills: list[str] = []
+        extra_skills: list[str] = []
+        for part in str(character["skills"]).split(","):
+            entry = part.strip()
+            if not entry:
+                continue
+            label = SKILL_LABEL_BY_LOWER.get(entry.lower())
+            if label and label not in known_skills:
+                known_skills.append(label)
+            elif not label:
+                extra_skills.append(entry)
+        self.builder_skill_selection = [name for name in SKILL_LABELS_ORDERED if name in known_skills]
+        self.builder_skill_extra = ", ".join(extra_skills)
+        self.builder_notes = character["notes"]
+        self.builder_ancestry = character["ancestry"] if character["ancestry"] in ANCESTRY_OPTIONS else "Human"
+        self.builder_class = character["character_class"] if character["character_class"] in CLASS_OPTIONS else "Fighter"
+        self.builder_background = character["background"] if character["background"] in BACKGROUND_OPTIONS else "Soldier"
+        # Stored scores already include ancestry bonuses, so edit mode treats
+        # them as final values and never re-applies bonuses on save.
+        self.builder_scores = {key: str(character[key]) for key in ABILITY_KEYS}
+        self.builder_saves = character["saves"]
+        self.go("builder")
+
+    def cancel_edit_character(self) -> None:
+        self._reset_builder()
+        self.go("sheet")
+
+    def delete_character(self, character_id: int) -> None:
+        character = next((c for c in self.characters if int(c["id"]) == int(character_id)), None)
+        name = character["name"] if character else "That character"
+        if not data_access.delete_character(int(character_id), self.user_id):
+            self.app_message = "That character could not be deleted."
+            return
+        if self.selected_character_id == int(character_id):
+            self.selected_character_id = 0
+        if self.editing_character_id == int(character_id):
+            self._reset_builder()
+        self.load_user_data()
+        self.app_message = f"{name} was deleted and removed from their campaigns."
+
     def create_character(self, form_data: dict[str, Any]) -> None:
         if not self.is_authenticated:
             self.go("auth")
             return
+        editing = self.builder_mode == "edit" and self.editing_character_id
         ancestry = form_data.get("ancestry") or self.builder_ancestry
         character_class = form_data.get("character_class") or self.builder_class
         default_scores = _recommended_standard_array(character_class)
@@ -557,12 +687,19 @@ class AppState(rx.State):
             )
             for key in ABILITY_KEYS
         }
-        scores = _apply_ancestry_bonuses(
-            ancestry,
-            base_scores,
-            self.builder_half_elf_bonus_one,
-            self.builder_half_elf_bonus_two,
-        )
+        if editing:
+            # Edit mode: entered scores are final (bonuses were applied at creation).
+            scores = base_scores
+        else:
+            scores = _apply_ancestry_bonuses(
+                ancestry,
+                base_scores,
+                self.builder_half_elf_bonus_one,
+                self.builder_half_elf_bonus_two,
+            )
+        skill_entries = list(self.builder_skill_selection)
+        if self.builder_skill_extra.strip():
+            skill_entries.append(self.builder_skill_extra.strip())
         character = {
             "name": form_data.get("name", "Unnamed Hero").strip() or "Unnamed Hero",
             "ancestry": ancestry,
@@ -572,14 +709,22 @@ class AppState(rx.State):
             **scores,
             "armor": form_data.get("armor", "none"),
             "shield": form_data.get("shield", "off") == "on",
-            "skills": form_data.get("skills", "Perception"),
+            "skills": ", ".join(skill_entries) or "Perception",
             "saves": form_data.get("saves") or self.builder_saves,
             "notes": form_data.get("notes", ""),
         }
-        character_id = data_access.create_character(self.user_id, character)
-        self.selected_character_id = character_id
+        if editing:
+            if not data_access.update_character(self.editing_character_id, self.user_id, character):
+                self.app_message = "Saving changes failed — that character may have been deleted."
+                return
+            self.selected_character_id = self.editing_character_id
+            self.app_message = f"{character['name']} was updated."
+            self._reset_builder()
+        else:
+            character_id = data_access.create_character(self.user_id, character)
+            self.selected_character_id = character_id
+            self.app_message = f"{character['name']} was saved to {self.user_email}."
         self.load_user_data()
-        self.app_message = f"{character['name']} was saved to {self.user_email}."
         self.current_view = "sheet"
 
     def create_campaign(self, form_data: dict[str, Any]) -> None:
@@ -876,6 +1021,15 @@ class AppState(rx.State):
         ]
 
     @rx.var
+    def is_builder_editing(self) -> bool:
+        return self.builder_mode == "edit"
+
+    @rx.var
+    def builder_form_key(self) -> str:
+        """Remounts prefilled builder inputs when switching between create/edit targets."""
+        return f"{self.builder_mode}-{self.editing_character_id}"
+
+    @rx.var
     def builder_score_rows(self) -> list[dict[str, Any]]:
         bonuses = _ability_bonuses_for_ancestry(
             self.builder_ancestry,
@@ -919,12 +1073,84 @@ class AppState(rx.State):
             )
             for key in ABILITY_KEYS
         }
+        if self.builder_mode == "edit":
+            # Stored scores already include ancestry bonuses.
+            return base_scores
         return _apply_ancestry_bonuses(
             self.builder_ancestry,
             base_scores,
             self.builder_half_elf_bonus_one,
             self.builder_half_elf_bonus_two,
         )
+
+    @rx.var
+    def builder_proficiency_bonus(self) -> int:
+        return proficiency_bonus(_safe_int(self.builder_level, 1, minimum=1, maximum=20))
+
+    @rx.var
+    def builder_skill_rows(self) -> list[dict[str, Any]]:
+        """One row per SRD skill with its live bonus, for the proficiency picker."""
+        scores = self.builder_final_scores
+        prof = self.builder_proficiency_bonus
+        rows = []
+        for label in SKILL_LABELS_ORDERED:
+            ability = SKILL_ABILITY_BY_LABEL[label]
+            modifier = ability_modifier(scores[ability])
+            selected = label in self.builder_skill_selection
+            bonus = modifier + (prof if selected else 0)
+            detail = (
+                f"{ability.upper()} · proficient (+{prof} included)"
+                if selected
+                else f"{ability.upper()} · pick to add +{prof}"
+            )
+            rows.append(
+                {
+                    "label": label,
+                    "selected": selected,
+                    "bonus": format_bonus(bonus),
+                    "detail": detail,
+                }
+            )
+        return rows
+
+    @rx.var
+    def builder_skills_summary(self) -> str:
+        count = len(self.builder_skill_selection)
+        if count == 0:
+            return "No skills picked yet — most characters start with 4 (2 from class, 2 from background)."
+        return f"{count} picked: " + ", ".join(self.builder_skill_selection)
+
+    @rx.var
+    def builder_save_rows(self) -> list[dict[str, str]]:
+        """The class's saving-throw proficiencies with their live bonuses."""
+        scores = self.builder_final_scores
+        prof = self.builder_proficiency_bonus
+        rows = []
+        for part in self.builder_saves.split(","):
+            label = part.strip()
+            ability = ABILITY_KEYS_BY_LABEL.get(label)
+            bonus = format_bonus(ability_modifier(scores[ability]) + prof) if ability else ""
+            rows.append({"label": label, "bonus": bonus})
+        return rows
+
+    @rx.var
+    def builder_armor_text(self) -> str:
+        armor = ARMOR.get(self.builder_armor, ARMOR["none"])
+        if armor.category == "heavy":
+            dex_part = "your DEX bonus does not apply"
+        elif armor.dex_cap is None:
+            dex_part = "adds your full DEX bonus"
+        else:
+            dex_part = f"adds DEX up to +{armor.dex_cap}"
+        stealth_part = ", disadvantage on Stealth" if armor.stealth_disadvantage else ""
+        return f"{armor.name}: base AC {armor.base_ac}, {dex_part}{stealth_part}."
+
+    @rx.var
+    def builder_ac_text(self) -> str:
+        scores = self.builder_final_scores
+        ac = armor_class(scores["dex"], self.builder_armor, self.builder_shield)
+        shield_part = " (includes +2 from shield)" if self.builder_shield else ""
+        return f"Armor class with these choices: {ac}{shield_part}"
 
     @rx.var
     def ancestry_bonus_text(self) -> str:

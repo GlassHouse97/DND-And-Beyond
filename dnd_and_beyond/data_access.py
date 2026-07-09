@@ -219,7 +219,6 @@ def _migrate_legacy_data_dir() -> None:
 
 
 def connect() -> sqlite3.Connection:
-    _migrate_legacy_data_dir()
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 10000")
@@ -234,6 +233,7 @@ def initialize_database() -> None:
     with _init_lock:
         if path_key in _initialized_paths:
             return
+        _migrate_legacy_data_dir()
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with connect() as conn:
             # WAL lets simultaneous readers/writers coexist without
@@ -260,17 +260,30 @@ def initialize_database() -> None:
         _initialized_paths.add(path_key)
 
 
+_session_secret_cache: dict[str, str] = {}
+
+
 def get_session_secret() -> str:
-    """Stable per-database secret used to sign login session tokens."""
+    """Stable per-database secret used to sign login session tokens.
+
+    Cached in-process: this runs on every page load/reconnect via
+    restore_session, so it must not cost a DB connection each time.
+    """
+    path_key = str(DB_PATH)
+    cached = _session_secret_cache.get(path_key)
+    if cached:
+        return cached
     initialize_database()
     with connect() as conn:
         row = conn.execute("SELECT value FROM app_meta WHERE key = 'session_secret'").fetchone()
         if row:
-            return row["value"]
-        secret = secrets.token_hex(32)
-        conn.execute("INSERT INTO app_meta (key, value) VALUES ('session_secret', ?)", (secret,))
-        conn.commit()
-        return secret
+            secret = row["value"]
+        else:
+            secret = secrets.token_hex(32)
+            conn.execute("INSERT INTO app_meta (key, value) VALUES ('session_secret', ?)", (secret,))
+            conn.commit()
+    _session_secret_cache[path_key] = secret
+    return secret
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -405,6 +418,61 @@ def create_character(user_id: int, character: dict[str, Any]) -> int:
         )
         conn.commit()
         return int(cursor.lastrowid)
+
+
+def update_character(character_id: int, owner_user_id: int, character: dict[str, Any]) -> bool:
+    """Update a character's fields; ownership is enforced in the WHERE clause."""
+    initialize_database()
+    with connect() as conn:
+        result = conn.execute(
+            """
+            UPDATE characters SET
+                name = ?, ancestry = ?, character_class = ?, background = ?, level = ?,
+                strength = ?, dexterity = ?, constitution = ?, intelligence = ?, wisdom = ?, charisma = ?,
+                armor_name = ?, has_shield = ?, skill_proficiencies = ?, save_proficiencies = ?, notes = ?
+            WHERE id = ? AND owner_user_id = ?
+            """,
+            (
+                character["name"],
+                character["ancestry"],
+                character["character_class"],
+                character["background"],
+                int(character["level"]),
+                int(character["str"]),
+                int(character["dex"]),
+                int(character["con"]),
+                int(character["int"]),
+                int(character["wis"]),
+                int(character["cha"]),
+                character["armor"],
+                1 if character["shield"] else 0,
+                character["skills"],
+                character["saves"],
+                character["notes"],
+                character_id,
+                owner_user_id,
+            ),
+        )
+        conn.commit()
+    return result.rowcount == 1
+
+
+def delete_character(character_id: int, owner_user_id: int) -> bool:
+    """Delete a character and detach it from any campaign memberships."""
+    initialize_database()
+    with connect() as conn:
+        result = conn.execute(
+            "DELETE FROM characters WHERE id = ? AND owner_user_id = ?",
+            (character_id, owner_user_id),
+        )
+        if result.rowcount == 0:
+            return False
+        conn.execute(
+            "UPDATE campaign_members SET character_id = NULL, current_hp = ? WHERE character_id = ?",
+            (HP_UNSET, character_id),
+        )
+        conn.commit()
+    return True
 
 
 def list_user_campaigns(user_id: int) -> list[dict[str, Any]]:

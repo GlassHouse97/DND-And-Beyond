@@ -579,6 +579,7 @@ select {
 
 .score-box {
   min-height: 150px;
+  min-width: 0;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -586,6 +587,14 @@ select {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* Let the label and race/final rows wrap instead of colliding or overflowing. */
+.score-box > div {
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  column-gap: 8px;
 }
 
 .score-label {
@@ -597,6 +606,10 @@ select {
 
 .score-full-label {
   text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .bonus-pill,
@@ -651,6 +664,91 @@ select {
 
 .check {
   color: var(--ink);
+}
+
+.ac-preview {
+  margin: 0;
+  padding: 8px 10px;
+  background: #eadfc9;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--red-dark);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.skill-chip {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  padding: 8px 10px;
+  background: rgba(255, 248, 235, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 140ms var(--ease),
+    border-color 140ms var(--ease),
+    box-shadow 140ms var(--ease);
+}
+
+.skill-chip:hover {
+  border-color: var(--red);
+  background: #f6e8c8;
+}
+
+.skill-chip.active {
+  background: #f3e3bd;
+  border-color: var(--red);
+  box-shadow: inset 3px 0 0 var(--red);
+}
+
+.skill-name {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.skill-detail {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--muted);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.skill-chip.active .skill-detail {
+  color: var(--red-dark);
+}
+
+.bonus-pill.on {
+  background: var(--red);
+  border-color: var(--red-dark);
+  color: var(--cream);
+}
+
+.save-chip {
+  padding: 6px 10px;
+  background: rgba(255, 248, 235, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 .form-actions {

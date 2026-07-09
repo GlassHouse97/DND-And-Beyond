@@ -57,3 +57,40 @@ def test_verified_user_sees_only_their_characters_and_campaign_roles(tmp_path, m
     assert data_access.list_user_characters(dm["id"]) == []
     assert data_access.list_user_characters(player["id"])[0]["campaign_names"] == "Friday Table"
     assert data_access.get_campaign(campaign_id, player["id"])["role"] == "player"
+
+    # Editing is owner-only and persists every field it changes.
+    updated_fields = {
+        "name": "Renamed Hero",
+        "ancestry": "Dwarf",
+        "character_class": "Fighter",
+        "background": "Soldier",
+        "level": 3,
+        "str": 16,
+        "dex": 14,
+        "con": 15,
+        "int": 10,
+        "wis": 12,
+        "cha": 8,
+        "armor": "plate",
+        "shield": False,
+        "skills": "Athletics, Survival",
+        "saves": "Strength, Constitution",
+        "notes": "Now level 3",
+    }
+    assert data_access.update_character(character_id, dm["id"], updated_fields) is False
+    assert data_access.update_character(character_id, player["id"], updated_fields) is True
+    edited = data_access.get_character(character_id, player["id"])
+    assert edited["name"] == "Renamed Hero"
+    assert edited["level"] == 3
+    assert edited["strength"] == 16
+    assert edited["has_shield"] == 0
+
+    # Deleting is owner-only and detaches the character from campaign rosters.
+    assert data_access.delete_character(character_id, dm["id"]) is False
+    assert data_access.delete_character(character_id, player["id"]) is True
+    assert data_access.get_character(character_id, player["id"]) is None
+    member = next(
+        m for m in data_access.list_campaign_members(campaign_id) if m["user_id"] == player["id"]
+    )
+    assert member["character_id"] is None
+    assert member["current_hp"] == data_access.HP_UNSET

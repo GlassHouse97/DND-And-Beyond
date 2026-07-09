@@ -170,7 +170,7 @@ def dashboard() -> rx.Component:
                 class_name="page-intro",
             ),
             rx.grid(
-                action_card("Create Character", "Build a 5e-compatible character with calculated AC, HP, proficiency, saves, skills, and spell math.", "wand-sparkles", "builder"),
+                action_card("Create Character", "Build a 5e-compatible character with calculated AC, HP, proficiency, saves, skills, and spell math.", "wand-sparkles", "builder", on_open=AppState.start_new_character),
                 action_card("Open Sheet", "A phone-friendly, at-the-table character sheet with core stats pinned at the top.", "scroll-text", "sheet"),
                 action_card("Campaign Hub", "Shared notes, roster HP, dice rolling, and DM-only tools for where you last left off.", "map", "campaign"),
                 columns="3",
@@ -206,11 +206,11 @@ def dashboard() -> rx.Component:
     )
 
 
-def action_card(title: str, body: str, icon: str, view: str) -> rx.Component:
+def action_card(title: str, body: str, icon: str, view: str, on_open=None) -> rx.Component:
     return rx.box(
         rx.hstack(rx.box(rx.icon(icon, size=24), class_name="card-icon"), rx.heading(title, class_name="card-title"), align="center", spacing="3"),
         rx.text(body, class_name="body-text"),
-        rx.button(rx.text("Open"), rx.icon("arrow-right", size=18), on_click=lambda: AppState.go(view), class_name="secondary-action"),
+        rx.button(rx.text("Open"), rx.icon("arrow-right", size=18), on_click=on_open or (lambda: AppState.go(view)), class_name="secondary-action"),
         class_name="action-card",
     )
 
@@ -252,6 +252,7 @@ def character_dashboard_row(character: rx.Var[dict]) -> rx.Component:
             align="start",
         ),
         rx.spacer(),
+        rx.button("Edit", on_click=lambda: AppState.start_edit_character(character["id"]), class_name="secondary-action"),
         rx.button("Sheet", on_click=lambda: AppState.open_sheet(character["id"]), class_name="secondary-action"),
         class_name="compact-row",
     )
@@ -332,28 +333,46 @@ def character_builder() -> rx.Component:
         rx.vstack(
             rx.box(
                 rx.text("CHARACTER BUILDER", class_name="eyebrow"),
-                rx.heading("Create a table-ready hero.", class_name="page-title"),
-                rx.text("This wizard starts with SRD-safe choices and immediately sends the result to a calculated sheet.", class_name="lead"),
+                rx.cond(
+                    AppState.is_builder_editing,
+                    rx.heading("Editing ", AppState.builder_name, class_name="page-title"),
+                    rx.heading("Create a table-ready hero.", class_name="page-title"),
+                ),
+                rx.cond(
+                    AppState.is_builder_editing,
+                    rx.text("Change anything and save — campaigns keep this character attached. Ability scores here are final values (race bonuses are already baked in).", class_name="lead"),
+                    rx.text("This wizard starts with SRD-safe choices and immediately sends the result to a calculated sheet.", class_name="lead"),
+                ),
                 class_name="page-intro",
             ),
             rx.form(
                 rx.grid(
                     builder_section(
                         "Identity",
-                        labeled_field("Name", rx.input(name="name", placeholder="Character name", class_name="field")),
+                        labeled_field(
+                            "Name",
+                            rx.input(
+                                name="name",
+                                placeholder="Character name",
+                                default_value=AppState.builder_name,
+                                key=AppState.builder_form_key + "-name",
+                                class_name="field",
+                            ),
+                        ),
                         labeled_field(
                             "Race",
                             rx.select(
                                 list(ANCESTRY_OPTIONS),
                                 name="ancestry",
-                                default_value="Human",
+                                default_value=AppState.builder_ancestry,
+                                key=AppState.builder_form_key + "-ancestry",
                                 on_change=AppState.set_builder_ancestry,
                                 class_name="field",
                             ),
-                            AppState.ancestry_bonus_text,
+                            rx.cond(AppState.is_builder_editing, "", AppState.ancestry_bonus_text),
                         ),
                         rx.cond(
-                            AppState.builder_ancestry == "Half-Elf",
+                            (AppState.builder_ancestry == "Half-Elf") & ~AppState.is_builder_editing,
                             rx.grid(
                                 labeled_field(
                                     "Half-Elf +1",
@@ -395,52 +414,108 @@ def character_builder() -> rx.Component:
                             rx.select(
                                 list(CLASS_OPTIONS),
                                 name="character_class",
-                                default_value="Fighter",
+                                default_value=AppState.builder_class,
+                                key=AppState.builder_form_key + "-class",
                                 on_change=AppState.set_builder_class,
                                 class_name="field",
                             ),
-                            AppState.class_array_text,
+                            rx.cond(AppState.is_builder_editing, "", AppState.class_array_text),
                         ),
                         labeled_field(
                             "Background",
                             rx.select(
                                 list(BACKGROUND_OPTIONS),
                                 name="background",
-                                default_value="Soldier",
+                                default_value=AppState.builder_background,
+                                key=AppState.builder_form_key + "-background",
                                 on_change=AppState.set_builder_background,
                                 class_name="field",
                             ),
                             AppState.background_bonus_text,
                         ),
-                        labeled_field("Level", rx.input(name="level", placeholder="Level", default_value="1", class_name="field")),
+                        labeled_field(
+                            "Level",
+                            rx.input(
+                                name="level",
+                                placeholder="Level",
+                                default_value=AppState.builder_level,
+                                on_blur=AppState.set_builder_level,
+                                key=AppState.builder_form_key + "-level",
+                                class_name="field",
+                            ),
+                        ),
                     ),
                     builder_section(
                         "Ability Scores",
                         score_grid(),
-                        rx.text("Class chooses the standard-array order. Race bonuses are added to the final score shown on each tile.", class_name="hint"),
-                        rx.grid(rx.foreach(AppState.builder_score_rows, score_summary_row), columns="2", spacing="2", class_name="score-summary-grid"),
+                        rx.cond(
+                            AppState.is_builder_editing,
+                            rx.text("These are the character's final scores — edit them directly (race bonuses were applied when the character was created).", class_name="hint"),
+                            rx.text("Class chooses the standard-array order. Race bonuses are added to the final score shown on each tile.", class_name="hint"),
+                        ),
+                        rx.cond(
+                            AppState.is_builder_editing,
+                            rx.fragment(),
+                            rx.grid(rx.foreach(AppState.builder_score_rows, score_summary_row), columns="1", spacing="2", class_name="score-summary-grid"),
+                        ),
                     ),
                     builder_section(
                         "Equipment & Proficiencies",
-                        rx.select(["none", "leather", "studded leather", "scale mail", "half plate", "chain mail", "plate"], name="armor", default_value="chain mail", class_name="field"),
-                        rx.checkbox("Shield equipped", name="shield", default_checked=True, class_name="check"),
-                        rx.input(name="skills", placeholder="Skill proficiencies", default_value="Athletics, Perception", class_name="field"),
-                        rx.input(
-                            name="saves",
-                            placeholder="Saving throw proficiencies",
-                            default_value=AppState.builder_saves,
-                            key=AppState.builder_class + "-saves",
-                            class_name="field",
+                        labeled_field(
+                            "Armor",
+                            rx.select(
+                                ["none", "leather", "studded leather", "scale mail", "half plate", "chain mail", "plate"],
+                                name="armor",
+                                default_value=AppState.builder_armor,
+                                on_change=AppState.set_builder_armor,
+                                key=AppState.builder_form_key + "-armor",
+                                class_name="field",
+                            ),
+                            AppState.builder_armor_text,
                         ),
-                        rx.text_area(name="notes", placeholder="Character notes", class_name="textarea"),
+                        rx.checkbox(
+                            "Shield equipped (+2 AC)",
+                            name="shield",
+                            default_checked=AppState.builder_shield,
+                            on_change=AppState.set_builder_shield,
+                            key=AppState.builder_form_key + "-shield",
+                            class_name="check",
+                        ),
+                        rx.text(AppState.builder_ac_text, class_name="ac-preview"),
+                        rx.text("Skill Proficiencies", class_name="field-label"),
+                        rx.text(
+                            "Tap the skills your class and background grant — proficiency adds your proficiency bonus to those checks.",
+                            class_name="hint",
+                        ),
+                        rx.box(rx.foreach(AppState.builder_skill_rows, skill_chip), class_name="skill-grid"),
+                        rx.text(AppState.builder_skills_summary, class_name="field-hint"),
+                        rx.text("Saving Throws", class_name="field-label"),
+                        rx.hstack(rx.foreach(AppState.builder_save_rows, save_chip), spacing="2", wrap="wrap"),
+                        rx.text("Chosen automatically by your class.", class_name="hint"),
+                        rx.text_area(
+                            name="notes",
+                            placeholder="Character notes",
+                            default_value=AppState.builder_notes,
+                            key=AppState.builder_form_key + "-notes",
+                            class_name="textarea",
+                        ),
                     ),
                     columns="3",
                     spacing="4",
                     class_name="builder-grid",
                 ),
                 rx.hstack(
-                    rx.button(rx.icon("sparkles", size=18), rx.text("Create Character"), type="submit", class_name="primary-action"),
-                    rx.button("Open Existing Sheet", on_click=lambda: AppState.go("sheet"), type="button", class_name="secondary-action"),
+                    rx.button(
+                        rx.icon("sparkles", size=18),
+                        rx.cond(AppState.is_builder_editing, rx.text("Save Changes"), rx.text("Create Character")),
+                        type="submit",
+                        class_name="primary-action",
+                    ),
+                    rx.cond(
+                        AppState.is_builder_editing,
+                        rx.button("Cancel Edit", on_click=AppState.cancel_edit_character, type="button", class_name="secondary-action"),
+                        rx.button("Open Existing Sheet", on_click=lambda: AppState.go("sheet"), type="button", class_name="secondary-action"),
+                    ),
                     class_name="form-actions",
                 ),
                 on_submit=AppState.create_character,
@@ -467,6 +542,7 @@ def labeled_field(label: str, control: rx.Component, hint: Any = "") -> rx.Compo
 
 
 def score_grid() -> rx.Component:
+    # Two columns: three squeezes the labels and race/final row off the tile.
     return rx.grid(
         score_input("STR", "str"),
         score_input("DEX", "dex"),
@@ -474,8 +550,41 @@ def score_grid() -> rx.Component:
         score_input("INT", "int"),
         score_input("WIS", "wis"),
         score_input("CHA", "cha"),
-        columns="3",
+        columns="2",
         spacing="3",
+    )
+
+
+def skill_chip(row: rx.Var[dict]) -> rx.Component:
+    """Toggleable skill proficiency with its live bonus and what picking it does."""
+    return rx.button(
+        rx.hstack(
+            rx.vstack(
+                rx.text(row["label"], class_name="skill-name"),
+                rx.text(row["detail"], class_name="skill-detail"),
+                spacing="0",
+                align="start",
+                min_width="0",
+            ),
+            rx.spacer(),
+            rx.text(row["bonus"], class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")),
+            width="100%",
+            align="center",
+            min_width="0",
+        ),
+        type="button",
+        on_click=lambda: AppState.toggle_builder_skill(row["label"]),
+        class_name=rx.cond(row["selected"], "skill-chip active", "skill-chip"),
+    )
+
+
+def save_chip(row: rx.Var[dict]) -> rx.Component:
+    return rx.hstack(
+        rx.text(row["label"], class_name="skill-name"),
+        rx.text(row["bonus"], class_name="bonus-pill on"),
+        spacing="2",
+        align="center",
+        class_name="save-chip",
     )
 
 
@@ -486,17 +595,21 @@ def score_input(label: str, name: str) -> rx.Component:
             name=name,
             default_value=AppState.builder_scores[name],
             on_blur=lambda value: AppState.set_builder_score(name, value),
-            key=AppState.builder_class + "-" + name,
+            key=AppState.builder_form_key + "-" + AppState.builder_class + "-" + name,
             class_name="score-input",
         ),
-        rx.hstack(
-            rx.text("Race", class_name="score-meta-label"),
-            rx.text(AppState.builder_bonus_labels[name], class_name="bonus-pill"),
-            rx.spacer(),
-            rx.text("Final", class_name="score-meta-label"),
-            rx.text(AppState.builder_final_scores[name], class_name="score-total"),
-            width="100%",
-            align="center",
+        rx.cond(
+            AppState.is_builder_editing,
+            rx.fragment(),
+            rx.hstack(
+                rx.text("Race", class_name="score-meta-label"),
+                rx.text(AppState.builder_bonus_labels[name], class_name="bonus-pill"),
+                rx.spacer(),
+                rx.text("Final", class_name="score-meta-label"),
+                rx.text(AppState.builder_final_scores[name], class_name="score-total"),
+                width="100%",
+                align="center",
+            ),
         ),
         class_name="score-box",
     )
@@ -511,6 +624,35 @@ def score_summary_row(row: rx.Var[dict]) -> rx.Component:
         rx.text("=", class_name="score-summary-equals"),
         rx.text(row["total"], class_name="score-summary-total"),
         class_name="score-summary-row",
+    )
+
+
+def delete_character_dialog() -> rx.Component:
+    """Delete button with an explicit confirmation before anything is removed."""
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(rx.icon("trash-2", size=16), rx.text("Delete"), class_name="icon-button danger"),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title("Delete ", AppState.primary_character["name"], "?"),
+            rx.alert_dialog.description(
+                "This permanently deletes the character and detaches them from every campaign they play in. "
+                "Campaign memberships stay — only the character is removed. This cannot be undone.",
+            ),
+            rx.flex(
+                rx.alert_dialog.cancel(rx.button("Keep character", class_name="secondary-action")),
+                rx.alert_dialog.action(
+                    rx.button(
+                        "Delete forever",
+                        on_click=lambda: AppState.delete_character(AppState.primary_character["id"]),
+                        class_name="icon-button danger",
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+        ),
     )
 
 
@@ -534,7 +676,7 @@ def character_switcher() -> rx.Component:
             rx.button(
                 rx.icon("plus", size=16),
                 rx.text("New"),
-                on_click=lambda: AppState.go("builder"),
+                on_click=AppState.start_new_character,
                 class_name="tab",
             ),
             class_name="segmented scroll-tabs",
@@ -554,6 +696,17 @@ def character_sheet() -> rx.Component:
                         rx.text(AppState.primary_character["ancestry"], " ", AppState.primary_character["background"], class_name="eyebrow"),
                         rx.heading(AppState.primary_character["name"], class_name="sheet-title"),
                         rx.text(AppState.primary_character["character_class"], " level ", AppState.primary_character["level"], class_name="lead"),
+                        rx.hstack(
+                            rx.button(
+                                rx.icon("pencil", size=16),
+                                rx.text("Edit"),
+                                on_click=lambda: AppState.start_edit_character(AppState.primary_character["id"]),
+                                class_name="secondary-action",
+                            ),
+                            delete_character_dialog(),
+                            spacing="2",
+                            class_name="sheet-actions",
+                        ),
                         class_name="sheet-identity",
                     ),
                     rx.grid(
