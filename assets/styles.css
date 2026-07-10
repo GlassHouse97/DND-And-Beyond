@@ -169,6 +169,42 @@ select {
   border-color: rgba(255, 248, 235, 0.18);
 }
 
+/* Text buttons for destructive / confirming actions — shaped like
+   .secondary-action, never the 42px icon square. */
+.danger-action,
+.success-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-weight: 800;
+  color: var(--cream);
+  cursor: pointer;
+  transition:
+    transform 180ms var(--ease),
+    background 180ms var(--ease),
+    box-shadow 180ms var(--ease);
+}
+
+.danger-action {
+  background: #8b2528;
+  border-color: #6e1d1f;
+}
+
+.success-action {
+  background: var(--green);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+.danger-action:hover,
+.success-action:hover {
+  transform: translateY(-1px);
+}
+
 .icon-button.strong {
   background: var(--red);
 }
@@ -839,6 +875,8 @@ select {
 .form-actions {
   margin-top: 20px;
   flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
 }
 
 .span-2 {

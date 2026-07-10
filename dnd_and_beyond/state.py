@@ -336,7 +336,7 @@ class AppState(rx.State):
     # Bumped whenever the builder is (re)filled so uncontrolled inputs remount
     # and pick up fresh default values.
     builder_form_nonce: int = 0
-    # The builder is a 3-step wizard: 1 Identity, 2 Abilities, 3 Combat & Gear.
+    # The builder is a 4-step wizard: 1 Identity, 2 Abilities, 3 Combat & Gear, 4 Review.
     builder_step: int = 1
     builder_weapon_selection: list[str] = []
     builder_spell_selection: list[str] = []
@@ -618,7 +618,7 @@ class AppState(rx.State):
         self.builder_spell_selection = ordered
 
     def set_builder_step(self, step: int) -> None:
-        self.builder_step = max(1, min(3, int(step)))
+        self.builder_step = max(1, min(4, int(step)))
 
     def builder_continue(self) -> None:
         self.set_builder_step(self.builder_step + 1)
@@ -1322,6 +1322,65 @@ class AppState(rx.State):
             return f"Carrying: {weapons}."
         spells = ", ".join(self.builder_spell_selection) or "no spells yet"
         return f"Carrying: {weapons}. Spellbook: {spells}."
+
+    @rx.var
+    def builder_preview_stats(self) -> dict[str, Any]:
+        """The derived numbers for the Review step, computed from wizard state."""
+        scores = self.builder_final_scores
+        klass = self.builder_class or "Fighter"
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        return {
+            "hp": max_hp(klass, level, scores["con"]),
+            "ac": armor_class(scores["dex"], self.builder_armor, self.builder_shield),
+            "proficiency": format_bonus(proficiency_bonus(level)),
+            "initiative": format_bonus(ability_modifier(scores["dex"])),
+            "spell_dc": spell_save_dc(klass, level, scores),
+            "spell_attack": format_bonus(spell_attack_bonus(klass, level, scores)),
+        }
+
+    @rx.var
+    def builder_review_name(self) -> str:
+        return self.builder_name.strip() or "Unnamed Hero"
+
+    @rx.var
+    def builder_review_scores(self) -> list[dict[str, Any]]:
+        scores = self.builder_final_scores
+        return [
+            {
+                "abbr": key.upper(),
+                "total": scores[key],
+                "modifier": f"{ABILITY_LABELS[key]} {format_bonus(ability_modifier(scores[key]))}",
+            }
+            for key in ABILITY_KEYS
+        ]
+
+    @rx.var
+    def builder_selected_skill_rows(self) -> list[dict[str, Any]]:
+        return [row for row in self.builder_skill_rows if row["selected"]]
+
+    @rx.var
+    def builder_selected_weapon_rows(self) -> list[dict[str, Any]]:
+        return [row for row in self.builder_weapon_rows if row["selected"]]
+
+    @rx.var
+    def builder_selected_spell_rows(self) -> list[dict[str, Any]]:
+        return [row for row in self.builder_spell_rows if row["selected"]]
+
+    @rx.var
+    def builder_has_weapons(self) -> bool:
+        return len(self.builder_weapon_selection) > 0
+
+    @rx.var
+    def builder_has_spells(self) -> bool:
+        return len(self.builder_spell_selection) > 0
+
+    @rx.var
+    def builder_has_skills(self) -> bool:
+        return len(self.builder_skill_selection) > 0
+
+    @rx.var
+    def builder_has_notes(self) -> bool:
+        return bool(self.builder_notes.strip())
 
     @rx.var
     def sheet_attack_rows(self) -> list[dict[str, Any]]:

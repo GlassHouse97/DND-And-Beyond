@@ -59,8 +59,8 @@ def shell(content: rx.Component) -> rx.Component:
                 rx.spacer(),
                 rx.hstack(
                     rx.button("Dashboard", on_click=lambda: AppState.go("dashboard"), class_name="nav-button"),
-                    rx.button("Builder", on_click=lambda: AppState.go("builder"), class_name="nav-button"),
-                    rx.button("Sheet", on_click=lambda: AppState.go("sheet"), class_name="nav-button"),
+                    rx.button("Character Builder", on_click=lambda: AppState.go("builder"), class_name="nav-button"),
+                    rx.button("Character Sheet", on_click=lambda: AppState.go("sheet"), class_name="nav-button"),
                     rx.button("Campaign", on_click=lambda: AppState.go("campaign"), class_name="nav-button"),
                     rx.cond(
                         AppState.is_hydrated,
@@ -390,7 +390,7 @@ def reset_builder_dialog() -> rx.Component:
                 rx.icon("rotate-ccw", size=16),
                 rx.text("Reset All"),
                 type="button",
-                class_name="icon-button danger",
+                class_name="danger-action",
             ),
         ),
         rx.alert_dialog.content(
@@ -415,7 +415,7 @@ def reset_builder_dialog() -> rx.Component:
                     rx.button(
                         "Reset all",
                         on_click=AppState.reset_builder_form,
-                        class_name="icon-button danger",
+                        class_name="danger-action",
                     ),
                 ),
                 spacing="3",
@@ -440,6 +440,7 @@ def builder_step_indicator() -> rx.Component:
         chip(1, "Identity"),
         chip(2, "Abilities"),
         chip(3, "Combat & Gear"),
+        chip(4, "Review"),
         class_name="segmented scroll-tabs",
     )
 
@@ -641,6 +642,158 @@ def builder_step_three() -> rx.Component:
     )
 
 
+def review_section(title: str, step: int, *children: rx.Component, span: bool = False) -> rx.Component:
+    """A Review panel with a small Edit shortcut back to the step that owns it."""
+    return rx.box(
+        rx.hstack(
+            rx.heading(title, class_name="section-heading"),
+            rx.spacer(),
+            rx.button(
+                rx.icon("pencil", size=14),
+                rx.text("Edit"),
+                on_click=lambda: AppState.set_builder_step(step),
+                type="button",
+                class_name="tab",
+            ),
+            align="center",
+            width="100%",
+        ),
+        *children,
+        class_name="panel span-2" if span else "panel",
+    )
+
+
+def review_skill_chip(row: rx.Var[dict]) -> rx.Component:
+    return rx.hstack(
+        rx.text(row["label"], class_name="skill-name"),
+        rx.text(row["bonus"], class_name="bonus-pill on"),
+        spacing="2",
+        align="center",
+        class_name="save-chip",
+    )
+
+
+def review_weapon_card(row: rx.Var[dict]) -> rx.Component:
+    return rx.box(
+        rx.hstack(
+            rx.text(row["name"], class_name="skill-name"),
+            rx.spacer(),
+            rx.text(row["attack_bonus"], class_name="bonus-pill on"),
+            width="100%",
+            align="center",
+        ),
+        rx.text(row["summary"], class_name="skill-detail"),
+        rx.text(row["text"], class_name="pick-text open"),
+        class_name="mini-card",
+    )
+
+
+def builder_step_four() -> rx.Component:
+    """The full character sheet, previewed before anything is saved."""
+    return rx.vstack(
+        rx.box(
+            rx.grid(
+                rx.box(
+                    rx.text(AppState.builder_ancestry, " · ", AppState.builder_background, class_name="eyebrow"),
+                    rx.heading(AppState.builder_review_name, class_name="sheet-title"),
+                    rx.text(AppState.builder_class, " level ", AppState.builder_level, class_name="lead"),
+                    class_name="sheet-identity",
+                ),
+                rx.grid(
+                    stat_tile("AC", AppState.builder_preview_stats["ac"]),
+                    stat_tile("HP", AppState.builder_preview_stats["hp"], "max"),
+                    stat_tile("INIT", AppState.builder_preview_stats["initiative"]),
+                    stat_tile("PROF", AppState.builder_preview_stats["proficiency"]),
+                    columns="4",
+                    spacing="3",
+                    class_name="sheet-stat-grid",
+                ),
+                columns="2",
+                spacing="4",
+                class_name="sheet-hero",
+            ),
+            class_name="sheet-top",
+        ),
+        rx.grid(
+            review_section(
+                "Ability Scores",
+                2,
+                rx.grid(
+                    rx.foreach(
+                        AppState.builder_review_scores,
+                        lambda row: stat_tile(row["abbr"], row["total"], row["modifier"]),
+                    ),
+                    columns="3",
+                    spacing="3",
+                ),
+            ),
+            review_section(
+                "Skills & Saving Throws",
+                2,
+                rx.cond(
+                    AppState.builder_has_skills,
+                    rx.hstack(rx.foreach(AppState.builder_selected_skill_rows, review_skill_chip), spacing="2", wrap="wrap"),
+                    rx.text("No skill proficiencies picked yet.", class_name="hint"),
+                ),
+                rx.text("Saving Throws", class_name="field-label"),
+                rx.hstack(rx.foreach(AppState.builder_save_rows, save_chip), spacing="2", wrap="wrap"),
+            ),
+            review_section(
+                "Attacks",
+                3,
+                rx.text(
+                    "Armor: ", AppState.builder_armor,
+                    rx.cond(AppState.builder_shield, " + shield", ""),
+                    " — AC ", AppState.builder_preview_stats["ac"],
+                    class_name="body-text",
+                ),
+                rx.cond(
+                    AppState.builder_has_weapons,
+                    rx.grid(rx.foreach(AppState.builder_selected_weapon_rows, review_weapon_card), columns="2", spacing="3", class_name="two-col"),
+                    rx.text("No weapons picked — this hero enters the fray empty-handed.", class_name="hint"),
+                ),
+                span=True,
+            ),
+            rx.cond(
+                AppState.builder_class_is_caster,
+                review_section(
+                    "Spells",
+                    3,
+                    rx.grid(
+                        stat_tile("Save DC", AppState.builder_preview_stats["spell_dc"]),
+                        stat_tile("Attack", AppState.builder_preview_stats["spell_attack"]),
+                        stat_tile("Known", AppState.builder_selected_spell_rows.length()),
+                        columns="3",
+                        spacing="3",
+                    ),
+                    rx.cond(
+                        AppState.builder_has_spells,
+                        rx.grid(rx.foreach(AppState.builder_selected_spell_rows, sheet_spell_card), columns="2", spacing="3", class_name="two-col"),
+                        rx.text("No spells picked yet.", class_name="hint"),
+                    ),
+                    span=True,
+                ),
+                rx.fragment(),
+            ),
+            rx.cond(
+                AppState.builder_has_notes,
+                review_section("Notes", 3, rx.text(AppState.builder_notes, class_name="body-text"), span=True),
+                rx.fragment(),
+            ),
+            columns="2",
+            spacing="4",
+            class_name="two-col",
+        ),
+        rx.text(
+            "This is exactly how the character sheet will look. Everything good? Create below — or tap Edit on any section to change it.",
+            class_name="hint",
+        ),
+        spacing="4",
+        align="stretch",
+        width="100%",
+    )
+
+
 def weapon_chip(row: rx.Var[dict]) -> rx.Component:
     return rx.button(
         rx.vstack(
@@ -699,7 +852,7 @@ def character_builder() -> rx.Component:
                 rx.cond(
                     AppState.is_builder_editing,
                     rx.text("Change anything and save — campaigns keep this character attached. Ability scores here are final values (race bonuses are already baked in).", class_name="lead"),
-                    rx.text("Three quick steps: who they are, what they're good at, and how they fight.", class_name="lead"),
+                    rx.text("Four quick steps: who they are, what they're good at, how they fight — then review the finished sheet before you create it.", class_name="lead"),
                 ),
                 class_name="page-intro",
             ),
@@ -707,6 +860,7 @@ def character_builder() -> rx.Component:
             rx.cond(AppState.builder_step == 1, builder_step_one(), rx.fragment()),
             rx.cond(AppState.builder_step == 2, builder_step_two(), rx.fragment()),
             rx.cond(AppState.builder_step == 3, builder_step_three(), rx.fragment()),
+            rx.cond(AppState.builder_step == 4, builder_step_four(), rx.fragment()),
             rx.hstack(
                 rx.cond(
                     AppState.builder_step > 1,
@@ -714,8 +868,14 @@ def character_builder() -> rx.Component:
                     rx.fragment(),
                 ),
                 rx.cond(
-                    AppState.builder_step < 3,
-                    rx.button(rx.text("Continue"), rx.icon("arrow-right", size=18), on_click=AppState.builder_continue, type="button", class_name="primary-action"),
+                    AppState.builder_step < 4,
+                    rx.button(
+                        rx.cond(AppState.builder_step == 3, rx.text("Review Character"), rx.text("Continue")),
+                        rx.icon("arrow-right", size=18),
+                        on_click=AppState.builder_continue,
+                        type="button",
+                        class_name="primary-action",
+                    ),
                     rx.button(
                         rx.icon("sparkles", size=18),
                         rx.cond(AppState.is_builder_editing, rx.text("Save Changes"), rx.text("Create Character")),
@@ -729,6 +889,7 @@ def character_builder() -> rx.Component:
                     rx.button("Cancel Edit", on_click=AppState.cancel_edit_character, type="button", class_name="secondary-action"),
                     rx.fragment(),
                 ),
+                rx.spacer(),
                 reset_builder_dialog(),
                 class_name="form-actions",
             ),
@@ -842,7 +1003,7 @@ def delete_character_dialog() -> rx.Component:
     """Delete button with an explicit confirmation before anything is removed."""
     return rx.alert_dialog.root(
         rx.alert_dialog.trigger(
-            rx.button(rx.icon("trash-2", size=16), rx.text("Delete"), class_name="icon-button danger"),
+            rx.button(rx.icon("trash-2", size=16), rx.text("Delete"), class_name="danger-action"),
         ),
         rx.alert_dialog.content(
             rx.alert_dialog.title("Delete ", AppState.primary_character["name"], "?"),
@@ -856,7 +1017,7 @@ def delete_character_dialog() -> rx.Component:
                     rx.button(
                         "Delete forever",
                         on_click=lambda: AppState.delete_character(AppState.primary_character["id"]),
-                        class_name="icon-button danger",
+                        class_name="danger-action",
                     ),
                 ),
                 spacing="3",
@@ -1330,13 +1491,13 @@ def join_request_row(request: rx.Var[dict]) -> rx.Component:
             rx.icon("check", size=16),
             rx.text("Accept"),
             on_click=lambda: AppState.approve_join_request(request["id"]),
-            class_name="icon-button success",
+            class_name="success-action",
         ),
         rx.button(
             rx.icon("x", size=16),
             rx.text("Decline"),
             on_click=lambda: AppState.decline_join_request(request["id"]),
-            class_name="icon-button danger",
+            class_name="danger-action",
         ),
         class_name="compact-row",
     )
@@ -1515,6 +1676,6 @@ def protected_page(content: rx.Component) -> rx.Component:
 
 app = rx.App(stylesheets=["/styles.css"])
 app.add_page(route, route="/", title="DND and Beyond", on_load=AppState.restore_session)
-app.add_page(lambda: protected_page(character_builder()), route="/builder", title="DND and Beyond - Builder", on_load=AppState.restore_session)
+app.add_page(lambda: protected_page(character_builder()), route="/builder", title="DND and Beyond - Character Builder", on_load=AppState.restore_session)
 app.add_page(lambda: protected_page(character_sheet()), route="/sheet", title="DND and Beyond - Character Sheet", on_load=AppState.restore_session)
 app.add_page(lambda: protected_page(campaign_page()), route="/campaign", title="DND and Beyond - Campaign", on_load=AppState.restore_session)
