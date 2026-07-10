@@ -21,12 +21,13 @@ The Sheet page shows all of your characters — switch between them with the chi
 - Blank-by-default user dashboards
 - Dashboard showing the logged-in user's characters, campaign attachments, and DM/player campaign roles
 - Character builder that creates a calculated sheet
-- Character sheet with pinned AC, HP, initiative, proficiency, tabs, spells, inventory, features, and notes
+- Traditional character sheet with identity, ability cards, saves, skills, combat stats, attacks, features, equipment, and spellcasting
 - Campaign hub with session log, shared notes, roster HP/location/conditions, invite code, join flow, and dice roller
 - DM view with party status board, DM notes, NPC tracker, and initiative tracker
 - HP changes in the initiative tracker sync back to the party status board
 - SQLite schema for users, characters, campaigns, campaign memberships, DM notes, NPCs, initiative state, and local rules tables
-- SRD seed script using `dnd5eapi.co`
+- Complete bundled SRD 5.1 spell catalog: all 319 spells, levels 0-9, components, casting details, descriptions, scaling, and class access
+- Class-aware magic rules for prepared, known, spellbook, Pact Magic, Magical Secrets, and ancestry innate spells
 - Automated tests for official 5e derived-stat math
 - CC-BY-4.0 SRD attribution in the app footer
 
@@ -48,6 +49,22 @@ python scripts\seed_srd.py
 ```
 
 The app should not call external rules APIs during core flows. This script pulls the SRD once and stores it locally.
+
+## Refresh the bundled spell catalog
+
+The application ships with the complete 319-spell SRD 5.1 catalog at
+`dnd_and_beyond/data/srd_spells_2014.json`, so character creation and the
+character sheet do not depend on an external rules API. To refresh the source
+data intentionally:
+
+```powershell
+python scripts\build_srd_spell_catalog.py
+```
+
+The builder enforces class access, level limits, cantrip limits, Wizard
+spellbook/prepared lists, and the appropriate known/prepared progression for
+each supported SRD class. Racial innate spells are stored separately from
+class spell selections.
 
 ## Local email verification
 

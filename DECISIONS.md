@@ -17,3 +17,10 @@
 - Added local development email verification through `dnd_and_beyond/data/dev_email_outbox.log`; SMTP can be enabled later with environment variables when hosting.
 - Persisted characters, campaigns, campaign membership roles, and campaign attachment notes in SQLite so the dashboard can show "player" or "dm" per campaign.
 - Kept hosting deployment out of scope for now; local testing remains the priority until the app reaches a finished state.
+
+## 2026-07-10
+
+- Replaced the prototype tabbed sheet with a traditional, responsive character sheet layout while keeping the app's burgundy and brass visual system.
+- Bundled all 319 spells from the SRD 5.1-compatible 2014 catalog locally so runtime magic flows are deterministic and do not depend on an external API.
+- Added class-aware spellcasting rules for full and half casters, Wizard spellbooks, prepared and known spells, Warlock Pact Magic, Bard Magical Secrets, and racial innate spells.
+- Stored spell selections as a structured JSON envelope in the existing character column, with a compatibility fallback for characters created by the earlier comma-separated format.

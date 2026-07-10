@@ -45,9 +45,14 @@ def test_weapon_description_matches_starter_sheet_voice():
 
 
 def test_spell_catalog_is_well_formed():
+    assert len(SPELLS) == 319
     for spell in SPELLS.values():
-        assert spell.level in (0, 1, 2), spell.name
+        assert spell.level in range(10), spell.name
         assert spell.kind in ("attack", "save", "auto", "heal", "utility"), spell.name
+        assert spell.school
+        assert spell.cast and spell.range and spell.duration
+        assert spell.components
+        assert spell.text
         for klass in spell.classes:
             assert klass in CLASS_OPTIONS, f"{spell.name}: unknown class {klass}"
         if spell.kind == "save":
@@ -63,6 +68,8 @@ def test_every_caster_class_has_spells_and_martials_have_none():
         assert any(spell.level > 0 for spell in options), f"{klass} has no leveled spells"
     for klass in ("Barbarian", "Fighter", "Monk", "Rogue"):
         assert spells_for_class(klass) == [], klass
+    assert len(spells_for_class("Wizard")) >= 200
+    assert len(spells_for_class("Cleric")) >= 100
 
 
 def test_spell_description_fills_real_numbers():
@@ -72,7 +79,7 @@ def test_spell_description_fills_real_numbers():
     assert "1d10" in info["headline"]
     save_info = describe_spell(SPELLS["Sacred Flame"], "Cleric", 1, {**SCORES, "wis": 16})
     assert "DC 13 Dexterity save" in save_info["headline"]
-    assert "DC 13" in save_info["text"]
+    assert "DC: 13" in save_info["text"]
 
 
 def test_cantrip_damage_scales_with_level():

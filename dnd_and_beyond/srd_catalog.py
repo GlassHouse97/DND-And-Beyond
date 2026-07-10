@@ -7,7 +7,9 @@ piercing damage." All content is 5.1 SRD (CC-BY-4.0).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from importlib.resources import files
 
 from dnd_and_beyond.rules_math import (
     ability_modifier,
@@ -133,6 +135,14 @@ class Spell:
     save: str | None = None
     concentration: bool = False
     cantrip_scaling: bool = False   # dice count grows at levels 5/11/17
+    index: str = ""
+    components: tuple[str, ...] = ()
+    material: str = ""
+    ritual: bool = False
+    higher_level: tuple[str, ...] = ()
+    damage_at_slot_level: dict[str, str] = field(default_factory=dict)
+    damage_at_character_level: dict[str, str] = field(default_factory=dict)
+    attack_type: str = ""
 
 
 SPELLS: dict[str, Spell] = {
@@ -263,9 +273,75 @@ SPELLS: dict[str, Spell] = {
     )
 }
 
+
+def _spell_kind(payload: dict[str, object]) -> str:
+    if payload.get("attack_type"):
+        return "attack"
+    if payload.get("save_type"):
+        return "save"
+    description = " ".join(payload.get("description", []))
+    return "heal" if "regains hit points" in description.lower() else "utility"
+
+
+SAVE_ABILITY_NAMES = {
+    "STR": "Strength",
+    "DEX": "Dexterity",
+    "CON": "Constitution",
+    "INT": "Intelligence",
+    "WIS": "Wisdom",
+    "CHA": "Charisma",
+}
+
+
+def _load_srd_spell_catalog() -> dict[str, Spell]:
+    """Load the checked-in 319-spell SRD 5.1 catalog without a runtime API call."""
+    raw = files("dnd_and_beyond.data").joinpath("srd_spells_2014.json").read_text(encoding="utf-8")
+    catalog = json.loads(raw)
+    spells = []
+    for payload in catalog:
+        description = tuple(payload["description"])
+        spells.append(
+            Spell(
+                name=payload["name"],
+                level=int(payload["level"]),
+                school=payload["school"],
+                classes=tuple(payload["classes"]),
+                cast=payload["casting_time"],
+                range=payload["range"],
+                duration=payload["duration"],
+                kind=_spell_kind(payload),
+                text=" ".join(description),
+                dice=next(iter(payload["damage_at_character_level"].values()), "")
+                or payload["damage_at_slot_level"].get(str(payload["level"]), ""),
+                damage_type=payload["damage_type"] or None,
+                save=SAVE_ABILITY_NAMES.get(payload["save_type"], payload["save_type"]) or None,
+                concentration=bool(payload["concentration"]),
+                cantrip_scaling=bool(payload["damage_at_character_level"]),
+                index=payload["index"],
+                components=tuple(payload["components"]),
+                material=payload["material"],
+                ritual=bool(payload["ritual"]),
+                higher_level=tuple(payload["higher_level"]),
+                damage_at_slot_level=dict(payload["damage_at_slot_level"]),
+                damage_at_character_level=dict(payload["damage_at_character_level"]),
+                attack_type=payload["attack_type"],
+            )
+        )
+    if len(spells) != 319:
+        raise RuntimeError(f"The bundled SRD spell catalog must contain 319 spells, found {len(spells)}.")
+    return {spell.name: spell for spell in spells}
+
+
+# The prototype literal above remains as readable provenance for the first
+# small catalog. The bundled SRD catalog replaces it at import time.
+SPELLS = _load_srd_spell_catalog()
+
 SPELL_NAMES: tuple[str, ...] = tuple(SPELLS)
 
-SPELL_LEVEL_LABELS: dict[int, str] = {0: "Cantrip", 1: "1st level", 2: "2nd level"}
+SPELL_LEVEL_LABELS: dict[int, str] = {
+    0: "Cantrip", 1: "1st level", 2: "2nd level", 3: "3rd level", 4: "4th level",
+    5: "5th level", 6: "6th level", 7: "7th level", 8: "8th level", 9: "9th level",
+}
 
 
 def spells_for_class(character_class: str) -> list[Spell]:
@@ -279,6 +355,14 @@ def _cantrip_dice(base: str, level: int) -> str:
     return f"{int(count) * steps}d{die}"
 
 
+def _spell_dice_at_character_level(spell: Spell, level: int) -> str:
+    if spell.damage_at_character_level:
+        eligible = [int(key) for key in spell.damage_at_character_level if int(key) <= level]
+        if eligible:
+            return spell.damage_at_character_level[str(max(eligible))]
+    return spell.dice or ""
+
+
 def describe_spell(spell: Spell, character_class: str, level: int, scores: dict[str, int]) -> dict[str, str]:
     """Fill a spell's template with this character's real numbers."""
     dc = spell_save_dc(character_class, level, scores)
@@ -286,8 +370,8 @@ def describe_spell(spell: Spell, character_class: str, level: int, scores: dict[
     ability = spellcasting_ability(character_class)
     modifier = ability_modifier(scores[ability]) if ability else 0
 
-    dice = spell.dice or ""
-    if spell.cantrip_scaling and spell.dice:
+    dice = _spell_dice_at_character_level(spell, level)
+    if spell.cantrip_scaling and spell.dice and not spell.damage_at_character_level:
         dice = _cantrip_dice(spell.dice, level)
 
     text = spell.text
@@ -295,6 +379,10 @@ def describe_spell(spell: Spell, character_class: str, level: int, scores: dict[
     text = text.replace("{dc}", str(dc) if dc is not None else "—")
     text = text.replace("{atk}", format_bonus(atk) if atk is not None else "—")
     text = text.replace("{mod}", f"+ {modifier}" if modifier >= 0 else f"- {abs(modifier)}")
+    if spell.kind == "attack" and atk is None:
+        text = "Spell attack bonus: —. " + text
+    if spell.kind == "save" and dc is not None:
+        text = f"Spell save DC: {dc}. " + text
 
     if spell.kind == "attack":
         headline = f"Spell attack {format_bonus(atk)}" if atk is not None else "Spell attack"

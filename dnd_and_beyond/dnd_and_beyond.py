@@ -927,6 +927,116 @@ def spell_chip(row: rx.Var[dict]) -> rx.Component:
     )
 
 
+def cantrip_spell_chip(row: rx.Var[dict]) -> rx.Component:
+    return rx.button(
+        rx.vstack(
+            rx.hstack(rx.text(row["name"], class_name="skill-name"), rx.spacer(), rx.text(row["headline"], class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")), width="100%", align="center"),
+            rx.text(row["summary"], class_name="skill-detail"),
+            rx.text(row["text"], class_name="pick-text"),
+            spacing="1", align="start", width="100%",
+        ),
+        type="button",
+        on_click=lambda: AppState.toggle_builder_cantrip(row["name"]),
+        class_name=rx.cond(row["selected"], "pick-card active", "pick-card"),
+    )
+
+
+def prepared_spell_chip(row: rx.Var[dict]) -> rx.Component:
+    return rx.button(
+        rx.vstack(
+            rx.hstack(rx.text(row["name"], class_name="skill-name"), rx.spacer(), rx.text("Prepared", class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")), width="100%", align="center"),
+            rx.text(row["summary"], class_name="skill-detail"),
+            spacing="1", align="start", width="100%",
+        ),
+        type="button",
+        on_click=lambda: AppState.toggle_builder_prepared_spell(row["name"]),
+        class_name=rx.cond(row["selected"], "pick-card active", "pick-card"),
+    )
+
+
+def magical_secret_chip(row: rx.Var[dict]) -> rx.Component:
+    return rx.button(
+        rx.vstack(
+            rx.hstack(rx.text(row["name"], class_name="skill-name"), rx.text(row["level_label"], class_name="level-pill"), rx.spacer(), rx.text("Secret", class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")), width="100%", align="center"),
+            rx.text(row["summary"], class_name="skill-detail"),
+            spacing="1", align="start", width="100%",
+        ),
+        type="button",
+        on_click=lambda: AppState.toggle_builder_magical_secret(row["name"]),
+        class_name=rx.cond(row["selected"], "pick-card active", "pick-card"),
+    )
+
+
+def high_elf_cantrip_chip(row: rx.Var[dict]) -> rx.Component:
+    return rx.button(
+        rx.vstack(rx.text(row["name"], class_name="skill-name"), rx.text(row["text"], class_name="pick-text"), spacing="1", align="start", width="100%"),
+        type="button",
+        on_click=lambda: AppState.toggle_builder_innate_spell(row["name"]),
+        class_name=rx.cond(row["selected"], "pick-card active", "pick-card"),
+    )
+
+
+def builder_step_three() -> rx.Component:
+    return rx.grid(
+        builder_section(
+            "Armor & Defense",
+            labeled_field("Armor", rx.select(["none", "leather", "studded leather", "scale mail", "half plate", "chain mail", "plate"], default_value=AppState.builder_armor, on_change=AppState.set_builder_armor, key=AppState.builder_form_key + "-armor", class_name="field"), AppState.builder_armor_text),
+            rx.checkbox("Shield equipped (+2 AC)", default_checked=AppState.builder_shield, on_change=AppState.set_builder_shield, key=AppState.builder_form_key + "-shield", class_name="check"),
+            rx.text(AppState.builder_ac_text, class_name="ac-preview"),
+        ),
+        builder_section(
+            "Notes",
+            rx.text_area(placeholder="Backstory, bonds, quirks, gear not listed here...", default_value=AppState.builder_notes, on_blur=AppState.set_builder_notes, key=AppState.builder_form_key + "-notes", class_name="textarea"),
+        ),
+        rx.box(
+            rx.heading("Weapons & Attacks", class_name="section-heading"),
+            rx.text("Pick what your hero carries. Every card uses their real ability scores and proficiency bonus.", class_name="hint"),
+            rx.box(rx.foreach(AppState.builder_weapon_rows, weapon_chip), class_name="pick-grid"),
+            class_name="panel span-2",
+        ),
+        rx.box(
+            rx.heading("Class Magic", class_name="section-heading"),
+            rx.text(AppState.builder_spell_hint, class_name="hint"),
+            rx.text("Slots: ", AppState.builder_magic_summary["slots"], class_name="field-hint"),
+            rx.cond(
+                AppState.builder_class_is_caster,
+                rx.vstack(
+                    rx.cond(
+                        AppState.builder_cantrip_rows.length() > 0,
+                        rx.box(rx.text("Cantrips ", AppState.builder_cantrip_selection.length(), " / ", AppState.builder_magic_summary["cantrip_limit"], class_name="field-label"), rx.box(rx.foreach(AppState.builder_cantrip_rows, cantrip_spell_chip), class_name="pick-grid"), width="100%"),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        AppState.builder_spell_rows.length() > 0,
+                        rx.box(rx.text("Leveled spells ", AppState.builder_spell_selection.length(), " / ", AppState.builder_magic_summary["main_limit"], class_name="field-label"), rx.box(rx.foreach(AppState.builder_spell_rows, spell_chip), class_name="pick-grid"), width="100%"),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        AppState.builder_wizard_prepared_rows.length() > 0,
+                        rx.box(rx.text("Prepare from your spellbook ", AppState.builder_prepared_spell_selection.length(), " / ", AppState.builder_magic_summary["prepared_limit"], class_name="field-label"), rx.box(rx.foreach(AppState.builder_wizard_prepared_rows, prepared_spell_chip), class_name="pick-grid"), width="100%"),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        AppState.builder_magical_secret_rows.length() > 0,
+                        rx.box(rx.text("Magical Secrets ", AppState.builder_magical_secrets_selection.length(), " / ", AppState.builder_magic_summary["magical_secrets"], class_name="field-label"), rx.box(rx.foreach(AppState.builder_magical_secret_rows, magical_secret_chip), class_name="pick-grid"), width="100%"),
+                        rx.fragment(),
+                    ),
+                    spacing="4", align="stretch", width="100%",
+                ),
+                rx.text("No class spellcasting for this hero.", class_name="hint"),
+            ),
+            rx.cond(
+                AppState.builder_high_elf_cantrip_rows.length() > 0,
+                rx.box(rx.text("High Elf cantrip", class_name="field-label"), rx.text("This is an ancestry trait, not a wizard class spell.", class_name="hint"), rx.box(rx.foreach(AppState.builder_high_elf_cantrip_rows, high_elf_cantrip_chip), class_name="pick-grid"), margin_top="20px"),
+                rx.fragment(),
+            ),
+            class_name="panel span-2",
+        ),
+        rx.box(rx.text(AppState.builder_loadout_summary, class_name="field-hint"), class_name="span-2"),
+        columns="2", spacing="4", class_name="builder-step-grid two-col",
+    )
+
+
 def character_builder() -> rx.Component:
     return shell(
         rx.vstack(
@@ -1333,6 +1443,200 @@ def notes_panel() -> rx.Component:
 
 def feature_card(title: str, body: str) -> rx.Component:
     return rx.box(rx.heading(title, class_name="mini-heading"), rx.text(body, class_name="body-text"), class_name="mini-card")
+
+
+def classic_identity_field(label: str, value) -> rx.Component:
+    return rx.box(
+        rx.text(label, class_name="classic-label"),
+        rx.box(value, class_name="classic-field-value"),
+        class_name="classic-identity-field",
+    )
+
+
+def classic_ability_card(row: rx.Var[dict]) -> rx.Component:
+    return rx.box(
+        rx.text(row["label"], class_name="classic-label"),
+        rx.heading(row["score"], class_name="classic-ability-score"),
+        rx.text(row["modifier"], class_name="classic-ability-mod"),
+        class_name="classic-ability-card",
+    )
+
+
+def classic_save_row(row: rx.Var[dict]) -> rx.Component:
+    return rx.hstack(
+        rx.box(class_name=rx.cond(row["proficient"], "classic-check checked", "classic-check")),
+        rx.text(row["bonus"], class_name="classic-row-value"),
+        rx.text(row["label"], class_name="classic-row-label"),
+        width="100%",
+        align="center",
+        class_name="classic-list-row",
+    )
+
+
+def classic_skill_row(row: rx.Var[dict]) -> rx.Component:
+    return rx.hstack(
+        rx.box(class_name=rx.cond(row["proficient"], "classic-check checked", "classic-check")),
+        rx.text(row["bonus"], class_name="classic-row-value"),
+        rx.text(row["label"], class_name="classic-row-label"),
+        rx.text("(", row["ability"], ")", class_name="classic-row-ability"),
+        width="100%",
+        align="center",
+        class_name="classic-list-row",
+    )
+
+
+def classic_attack_row(row: rx.Var[dict]) -> rx.Component:
+    return rx.box(
+        rx.hstack(
+            rx.text(row["name"], class_name="classic-row-label"),
+            rx.spacer(),
+            rx.text(row["attack_bonus"], class_name="classic-row-value"),
+            rx.text(row["damage"], class_name="classic-damage"),
+            width="100%",
+            align="center",
+        ),
+        rx.text(row["text"], class_name="classic-detail"),
+        class_name="classic-entry",
+    )
+
+
+def classic_spell_row(row: rx.Var[dict]) -> rx.Component:
+    return rx.box(
+        rx.hstack(
+            rx.text(row["name"], class_name="classic-row-label"),
+            rx.spacer(),
+            rx.text(row["level_label"], class_name="classic-source"),
+            rx.text(row["source"], class_name="classic-source"),
+            width="100%",
+            align="center",
+        ),
+        rx.text(row["headline"], class_name="classic-spell-headline"),
+        rx.text(row["summary"], class_name="classic-detail"),
+        rx.text(row["text"], class_name="classic-detail open"),
+        rx.cond(row["higher_level"] != "", rx.text("At higher levels: ", row["higher_level"], class_name="classic-detail"), rx.fragment()),
+        class_name="classic-entry",
+    )
+
+
+def classic_sheet_panel(title: str, *children: rx.Component, class_name: str = "") -> rx.Component:
+    return rx.box(
+        rx.heading(title, class_name="classic-panel-title"),
+        *children,
+        class_name="classic-panel " + class_name,
+    )
+
+
+def character_sheet() -> rx.Component:
+    """A classic paper-sheet layout adapted for the app's live data model."""
+    return shell(
+        rx.cond(
+            AppState.has_characters,
+            rx.vstack(
+                character_switcher(),
+                rx.box(
+                    rx.hstack(
+                        rx.box(
+                            rx.text("CHARACTER NAME", class_name="classic-label"),
+                            rx.heading(AppState.primary_character["name"], class_name="classic-character-name"),
+                            class_name="classic-name-field",
+                        ),
+                        rx.grid(
+                            classic_identity_field("Class & level", rx.text(AppState.primary_character["character_class"], " ", AppState.primary_character["level"])),
+                            classic_identity_field("Background", AppState.primary_character["background"]),
+                            classic_identity_field("Ancestry", AppState.primary_character["ancestry"]),
+                            classic_identity_field("Campaigns", AppState.primary_character["campaign_names"]),
+                            columns="2",
+                            spacing="2",
+                            class_name="classic-identity-grid",
+                        ),
+                        rx.vstack(
+                            rx.button(rx.icon("pencil", size=16), rx.text("Edit"), on_click=lambda: AppState.start_edit_character(AppState.primary_character["id"]), class_name="secondary-action"),
+                            delete_character_dialog(),
+                            spacing="2",
+                            align="end",
+                        ),
+                        width="100%",
+                        align="stretch",
+                        class_name="classic-identity-band",
+                    ),
+                    rx.grid(
+                        rx.vstack(
+                            rx.box(rx.foreach(AppState.primary_ability_rows, classic_ability_card), class_name="classic-ability-stack"),
+                            classic_sheet_panel("Saving Throws", rx.box(rx.foreach(AppState.primary_save_rows, classic_save_row), class_name="classic-list")),
+                            classic_sheet_panel("Skills", rx.box(rx.foreach(AppState.primary_skill_rows, classic_skill_row), class_name="classic-list")),
+                            class_name="classic-left-column",
+                        ),
+                        rx.vstack(
+                            rx.grid(
+                                rx.box(rx.text("Armor Class", class_name="classic-label"), rx.heading(AppState.primary_stats["ac"], class_name="classic-vital-value"), class_name="classic-vital"),
+                                rx.box(rx.text("Initiative", class_name="classic-label"), rx.heading(AppState.primary_stats["initiative"], class_name="classic-vital-value"), class_name="classic-vital"),
+                                rx.box(rx.text("Speed", class_name="classic-label"), rx.heading("30 ft", class_name="classic-vital-value"), class_name="classic-vital"),
+                                columns="3",
+                                spacing="2",
+                                class_name="classic-vitals",
+                            ),
+                            rx.grid(
+                                rx.box(rx.text("Hit point maximum", class_name="classic-label"), rx.heading(AppState.primary_stats["hp"], class_name="classic-hp-value"), rx.text("Current HP is tracked per campaign.", class_name="classic-detail"), class_name="classic-hp-box"),
+                                rx.box(rx.text("Proficiency bonus", class_name="classic-label"), rx.heading(AppState.primary_stats["proficiency"], class_name="classic-hp-value"), rx.text("Passive Perception ", AppState.primary_stats["perception"], class_name="classic-detail"), class_name="classic-hp-box"),
+                                columns="2",
+                                spacing="2",
+                            ),
+                            classic_sheet_panel(
+                                "Attacks & Spellcasting",
+                                rx.cond(
+                                    AppState.sheet_has_attacks,
+                                    rx.box(rx.foreach(AppState.sheet_attack_rows, classic_attack_row), class_name="classic-entry-list"),
+                                    rx.text("No weapons selected.", class_name="classic-detail"),
+                                ),
+                            ),
+                            classic_sheet_panel(
+                                "Other Proficiencies & Languages",
+                                rx.text("Skill proficiencies: ", AppState.primary_character["skills"], class_name="classic-detail open"),
+                                rx.text("Saving throw proficiencies: ", AppState.primary_character["saves"], class_name="classic-detail open"),
+                            ),
+                            class_name="classic-center-column",
+                        ),
+                        rx.vstack(
+                            classic_sheet_panel("Features & Traits", rx.text(AppState.primary_character["character_class"], " class features and ", AppState.primary_character["ancestry"], " ancestry traits.", class_name="classic-detail open")),
+                            classic_sheet_panel("Background", rx.text(AppState.primary_character["background"], class_name="classic-note-text")),
+                            classic_sheet_panel("Notes", rx.text(AppState.primary_character["notes"], class_name="classic-note-text")),
+                            class_name="classic-right-column",
+                        ),
+                        columns="3",
+                        spacing="3",
+                        class_name="classic-main-grid",
+                    ),
+                    classic_sheet_panel(
+                        "Spellcasting",
+                        rx.cond(
+                            AppState.primary_magic_summary["mode"] != "None",
+                            rx.vstack(
+                                rx.grid(
+                                    classic_identity_field("Casting ability", AppState.primary_magic_summary["ability"]),
+                                    classic_identity_field("Spell save DC", AppState.primary_magic_summary["save_dc"]),
+                                    classic_identity_field("Spell attack", AppState.primary_magic_summary["attack"]),
+                                    classic_identity_field("Cantrips", AppState.primary_magic_summary["cantrips"]),
+                                    columns="4",
+                                    spacing="2",
+                                ),
+                                rx.text("Slots: ", AppState.primary_magic_summary["slots"], " · refresh: ", AppState.primary_magic_summary["recovery"], class_name="classic-detail open"),
+                                rx.text("Always prepared: ", AppState.primary_magic_summary["always_prepared"], class_name="classic-detail open"),
+                                rx.text("Mystic Arcanum: ", AppState.primary_magic_summary["arcanum"], class_name="classic-detail open"),
+                                rx.cond(AppState.sheet_has_spells, rx.box(rx.foreach(AppState.sheet_spell_rows, classic_spell_row), class_name="classic-spell-list"), rx.text("No spells selected yet.", class_name="classic-detail")),
+                                spacing="3",
+                                align="stretch",
+                            ),
+                            rx.cond(AppState.sheet_has_spells, rx.box(rx.foreach(AppState.sheet_spell_rows, classic_spell_row), class_name="classic-spell-list"), rx.text("This class has no spellcasting. Any ancestry magic appears here once chosen.", class_name="classic-detail")),
+                        ),
+                        class_name="classic-spell-panel",
+                    ),
+                    class_name="classic-sheet",
+                ),
+                spacing="4",
+            ),
+            empty_state("No character sheet yet", "Create a character from the builder and this page will become their playable sheet."),
+        )
+    )
 
 
 def campaign_page() -> rx.Component:

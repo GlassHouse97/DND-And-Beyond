@@ -24,3 +24,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["dnd_and_beyond*"]
+
+[tool.setuptools.package-data]
+"dnd_and_beyond.data" = ["*.json"]

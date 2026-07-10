@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import json
 import os
 import random
 import re
@@ -17,6 +18,16 @@ import reflex as rx
 
 from dnd_and_beyond import data_access
 from dnd_and_beyond.email_service import EmailDeliveryError, send_verification_email
+from dnd_and_beyond.magic_rules import (
+    cantrips_known,
+    casting_profile,
+    casting_summary,
+    magical_secrets_count,
+    max_spell_level,
+    prepared_spell_limit,
+    spellbook_limit,
+    spells_known_limit,
+)
 from dnd_and_beyond.srd_catalog import (
     SPELLS,
     WEAPONS,
@@ -104,9 +115,12 @@ ANCESTRY_OPTIONS: tuple[str, ...] = (
     "Human",
     "Dwarf",
     "Elf",
+    "High Elf",
     "Halfling",
     "Dragonborn",
     "Gnome",
+    "Forest Gnome",
+    "Drow",
     "Half-Elf",
     "Half-Orc",
     "Tiefling",
@@ -133,9 +147,12 @@ ANCESTRY_ABILITY_BONUSES: dict[str, dict[str, int]] = {
     "Human": {"str": 1, "dex": 1, "con": 1, "int": 1, "wis": 1, "cha": 1},
     "Dwarf": {"con": 2},
     "Elf": {"dex": 2},
+    "High Elf": {"dex": 2, "int": 1},
     "Halfling": {"dex": 2},
     "Dragonborn": {"str": 2, "cha": 1},
     "Gnome": {"int": 2},
+    "Forest Gnome": {"int": 2, "dex": 1},
+    "Drow": {"dex": 2, "cha": 1},
     "Half-Elf": {"cha": 2},
     "Half-Orc": {"str": 2, "con": 1},
     "Tiefling": {"int": 1, "cha": 2},
@@ -269,7 +286,73 @@ def _choice_to_id(choice: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+SPELL_STATE_KEYS: tuple[str, ...] = (
+    "cantrips",
+    "known",
+    "spellbook",
+    "prepared",
+    "innate",
+    "magical_secrets",
+)
+
+
+def _blank_spell_state() -> dict[str, list[str]]:
+    return {key: [] for key in SPELL_STATE_KEYS}
+
+
+def _spell_state_from_value(raw: Any) -> dict[str, list[str]]:
+    """Read the new JSON spell state while preserving existing comma-list sheets."""
+    state = _blank_spell_state()
+    text = str(raw or "").strip()
+    if not text:
+        return state
+    try:
+        decoded = json.loads(text)
+    except json.JSONDecodeError:
+        decoded = None
+    if isinstance(decoded, dict):
+        for key in SPELL_STATE_KEYS:
+            values = decoded.get(key, [])
+            if isinstance(values, list):
+                state[key] = [str(name) for name in values if str(name) in SPELLS]
+        return state
+    # Characters created before the complete magic system stored one comma list.
+    state["known"] = [name for name in (part.strip() for part in text.split(",")) if name in SPELLS]
+    return state
+
+
+def _spell_state_to_value(state: dict[str, list[str]]) -> str:
+    return json.dumps(
+        {key: sorted({name for name in state.get(key, []) if name in SPELLS}, key=lambda name: (SPELLS[name].level, name)) for key in SPELL_STATE_KEYS},
+        separators=(",", ":"),
+    )
+
+
+def _ancestry_innate_spells(ancestry: str, level: int, high_elf_choice: str = "") -> list[str]:
+    """Fixed ancestry traits; they never grant access to a class spell list."""
+    level = _safe_int(level, 1, minimum=1, maximum=20)
+    spells: list[str] = []
+    if ancestry == "High Elf" and high_elf_choice in SPELLS and SPELLS[high_elf_choice].level == 0 and "Wizard" in SPELLS[high_elf_choice].classes:
+        spells.append(high_elf_choice)
+    elif ancestry == "Forest Gnome":
+        spells.append("Minor Illusion")
+    elif ancestry == "Tiefling":
+        spells.append("Thaumaturgy")
+        if level >= 3:
+            spells.append("Hellish Rebuke")
+        if level >= 5:
+            spells.append("Darkness")
+    elif ancestry == "Drow":
+        spells.append("Dancing Lights")
+        if level >= 3:
+            spells.append("Faerie Fire")
+        if level >= 5:
+            spells.append("Darkness")
+    return [name for name in spells if name in SPELLS]
+
+
 def _character_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    spell_state = _spell_state_from_value(row.get("spells"))
     return {
         "id": row["id"],
         "name": row["name"],
@@ -288,7 +371,7 @@ def _character_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "skills": row["skill_proficiencies"],
         "saves": row["save_proficiencies"],
         "weapons": row.get("weapons") or "",
-        "spells": row.get("spells") or "",
+        "spell_state": spell_state,
         "notes": row["notes"],
         "campaign_names": row.get("campaign_names", ""),
     }
@@ -345,7 +428,13 @@ class AppState(rx.State):
     # The builder is a 4-step wizard: 1 Identity, 2 Abilities, 3 Combat & Gear, 4 Review.
     builder_step: int = 1
     builder_weapon_selection: list[str] = []
+    # Class cantrips and leveled spells are separate because cantrips are
+    # never prepared and use their own class progression.
+    builder_cantrip_selection: list[str] = []
     builder_spell_selection: list[str] = []
+    builder_prepared_spell_selection: list[str] = []
+    builder_magical_secrets_selection: list[str] = []
+    builder_innate_spell_selection: list[str] = []
     builder_name: str = ""
     builder_level: str = "1"
     builder_armor: str = "chain mail"
@@ -609,12 +698,19 @@ class AppState(rx.State):
 
     def set_builder_ancestry(self, ancestry: str) -> None:
         self.builder_ancestry = ancestry if ancestry in ANCESTRY_OPTIONS else "Human"
+        if self.builder_ancestry != "High Elf":
+            self.builder_innate_spell_selection = []
 
     def set_builder_class(self, character_class: str) -> None:
         self.builder_class = character_class if character_class in CLASS_OPTIONS else "Fighter"
-        # Spells the new class can't cast fall out of the selection.
+        # Spell access is class based. Any selected spell outside the new class
+        # list falls out; ancestry traits are deliberately left alone.
         allowed = {spell.name for spell in spells_for_class(self.builder_class)}
-        self.builder_spell_selection = [name for name in self.builder_spell_selection if name in allowed]
+        self.builder_cantrip_selection = [name for name in self.builder_cantrip_selection if name in allowed and SPELLS[name].level == 0]
+        self.builder_spell_selection = [name for name in self.builder_spell_selection if name in allowed and SPELLS[name].level > 0]
+        self.builder_prepared_spell_selection = [name for name in self.builder_prepared_spell_selection if name in self.builder_spell_selection]
+        if self.builder_class != "Bard":
+            self.builder_magical_secrets_selection = []
         if self.builder_mode == "edit":
             # Editing an existing hero: changing class must not wipe their scores.
             return
@@ -629,6 +725,10 @@ class AppState(rx.State):
 
     def set_builder_level(self, value: str) -> None:
         self.builder_level = str(_safe_int(value, 1, minimum=1, maximum=20))
+        max_level = max_spell_level(self.builder_class, int(self.builder_level))
+        self.builder_spell_selection = [name for name in self.builder_spell_selection if SPELLS[name].level <= max_level]
+        self.builder_prepared_spell_selection = [name for name in self.builder_prepared_spell_selection if name in self.builder_spell_selection]
+        self.builder_magical_secrets_selection = [name for name in self.builder_magical_secrets_selection if SPELLS[name].level <= max_level]
 
     def set_builder_armor(self, armor: str) -> None:
         self.builder_armor = armor if armor in ARMOR_CHOICES else "none"
@@ -660,12 +760,78 @@ class AppState(rx.State):
         self.builder_weapon_selection = [w for w in sorted(WEAPONS) if w in selected]
 
     def toggle_builder_spell(self, name: str) -> None:
-        if name not in SPELLS:
+        if name not in SPELLS or SPELLS[name].level == 0:
+            return
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        if name not in {spell.name for spell in spells_for_class(self.builder_class)} or SPELLS[name].level > max_spell_level(self.builder_class, level):
             return
         selected = set(self.builder_spell_selection)
-        selected.discard(name) if name in selected else selected.add(name)
+        if name in selected:
+            selected.discard(name)
+            self.builder_prepared_spell_selection = [spell for spell in self.builder_prepared_spell_selection if spell != name]
+        else:
+            profile = casting_profile(self.builder_class)
+            ability = profile.ability or "int"
+            score = self.builder_final_scores[ability]
+            limit = (
+                spellbook_limit(level)
+                if profile.mode == "spellbook"
+                else prepared_spell_limit(self.builder_class, level, score)
+                if profile.mode == "prepared"
+                else spells_known_limit(self.builder_class, level)
+            )
+            if len(selected) >= limit:
+                self.app_message = f"This {profile.mode} selection is full for level {level}. Remove a spell first."
+                return
+            selected.add(name)
         ordered = sorted(selected, key=lambda s: (SPELLS[s].level, s))
         self.builder_spell_selection = ordered
+
+    def toggle_builder_cantrip(self, name: str) -> None:
+        if name not in SPELLS or SPELLS[name].level != 0 or name not in {spell.name for spell in spells_for_class(self.builder_class)}:
+            return
+        selected = set(self.builder_cantrip_selection)
+        if name in selected:
+            selected.discard(name)
+        elif len(selected) >= cantrips_known(self.builder_class, _safe_int(self.builder_level, 1, minimum=1, maximum=20)):
+            self.app_message = "That class has already selected its cantrip limit at this level."
+            return
+        else:
+            selected.add(name)
+        self.builder_cantrip_selection = sorted(selected)
+
+    def toggle_builder_prepared_spell(self, name: str) -> None:
+        if self.builder_class != "Wizard" or name not in self.builder_spell_selection:
+            return
+        selected = set(self.builder_prepared_spell_selection)
+        if name in selected:
+            selected.discard(name)
+        else:
+            limit = prepared_spell_limit("Wizard", _safe_int(self.builder_level, 1, minimum=1, maximum=20), self.builder_final_scores["int"])
+            if len(selected) >= limit:
+                self.app_message = "Your wizard preparation limit is full. Remove a prepared spell first."
+                return
+            selected.add(name)
+        self.builder_prepared_spell_selection = sorted(selected, key=lambda spell: (SPELLS[spell].level, spell))
+
+    def toggle_builder_magical_secret(self, name: str) -> None:
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        if self.builder_class != "Bard" or name not in SPELLS or SPELLS[name].level == 0 or SPELLS[name].level > max_spell_level("Bard", level):
+            return
+        selected = set(self.builder_magical_secrets_selection)
+        if name in selected:
+            selected.discard(name)
+        elif len(selected) >= magical_secrets_count(level):
+            self.app_message = "All available Magical Secrets are already selected for this level."
+            return
+        else:
+            selected.add(name)
+        self.builder_magical_secrets_selection = sorted(selected, key=lambda spell: (SPELLS[spell].level, spell))
+
+    def toggle_builder_innate_spell(self, name: str) -> None:
+        if self.builder_ancestry != "High Elf" or name not in SPELLS or SPELLS[name].level != 0 or "Wizard" not in SPELLS[name].classes:
+            return
+        self.builder_innate_spell_selection = [] if name in self.builder_innate_spell_selection else [name]
 
     def set_builder_step(self, step: int) -> None:
         self.builder_step = max(1, min(4, int(step)))
@@ -730,7 +896,11 @@ class AppState(rx.State):
         self.builder_half_elf_bonus_one = "dex"
         self.builder_half_elf_bonus_two = "con"
         self.builder_weapon_selection = []
+        self.builder_cantrip_selection = []
         self.builder_spell_selection = []
+        self.builder_prepared_spell_selection = []
+        self.builder_magical_secrets_selection = []
+        self.builder_innate_spell_selection = []
         self.builder_step = 1
         self.builder_form_nonce += 1
 
@@ -775,11 +945,27 @@ class AppState(rx.State):
             w for w in sorted(WEAPONS)
             if w.lower() in {part.strip().lower() for part in str(character.get("weapons", "")).split(",")}
         ]
-        known_spells = {part.strip().lower() for part in str(character.get("spells", "")).split(",")}
-        self.builder_spell_selection = sorted(
-            (s for s in SPELLS if s.lower() in known_spells),
-            key=lambda s: (SPELLS[s].level, s),
+        spell_state = character.get("spell_state", _blank_spell_state())
+        self.builder_cantrip_selection = list(spell_state["cantrips"])
+        # For prepared casters this is their current daily list; wizards use it
+        # as their spellbook and retain a distinct prepared list.
+        legacy_selected = list(spell_state["known"])
+        self.builder_spell_selection = list(
+            spell_state["spellbook"] or legacy_selected
+            if self.builder_class == "Wizard"
+            else spell_state["prepared"]
+            or legacy_selected
+            if casting_profile(self.builder_class).mode == "prepared"
+            else legacy_selected
         )
+        self.builder_prepared_spell_selection = list(
+            spell_state["prepared"] or legacy_selected if self.builder_class == "Wizard" else []
+        )
+        self.builder_magical_secrets_selection = list(spell_state["magical_secrets"])
+        self.builder_innate_spell_selection = [
+            name for name in spell_state["innate"]
+            if self.builder_ancestry == "High Elf" and name in SPELLS and SPELLS[name].level == 0
+        ]
         self.builder_step = 1
         self.builder_form_nonce += 1
         self.go("builder")
@@ -847,7 +1033,26 @@ class AppState(rx.State):
             "skills": ", ".join(skill_entries) or "Perception",
             "saves": self.builder_saves,
             "weapons": ", ".join(self.builder_weapon_selection),
-            "spells": ", ".join(self.builder_spell_selection),
+            "spells": _spell_state_to_value(
+                {
+                    "cantrips": self.builder_cantrip_selection,
+                    "known": self.builder_spell_selection
+                    if casting_profile(self.builder_class).mode in {"known", "pact"}
+                    else [],
+                    "spellbook": self.builder_spell_selection if self.builder_class == "Wizard" else [],
+                    "prepared": self.builder_prepared_spell_selection
+                    if self.builder_class == "Wizard"
+                    else self.builder_spell_selection
+                    if casting_profile(self.builder_class).mode == "prepared"
+                    else [],
+                    "innate": _ancestry_innate_spells(
+                        self.builder_ancestry,
+                        _safe_int(self.builder_level, 1, minimum=1, maximum=20),
+                        self.builder_innate_spell_selection[0] if self.builder_innate_spell_selection else "",
+                    ),
+                    "magical_secrets": self.builder_magical_secrets_selection,
+                }
+            ),
             "notes": self.builder_notes,
         }
         if editing:
@@ -1355,11 +1560,14 @@ class AppState(rx.State):
 
     @rx.var
     def builder_spell_rows(self) -> list[dict[str, Any]]:
-        """The current class's spell list with this character's real numbers."""
+        """Class leveled spells, filtered by the slots this hero actually has."""
         scores = self.builder_final_scores
         level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
         rows = []
-        for spell in sorted(spells_for_class(self.builder_class), key=lambda s: (s.level, s.name)):
+        for spell in sorted(
+            (spell for spell in spells_for_class(self.builder_class) if 0 < spell.level <= max_spell_level(self.builder_class, level)),
+            key=lambda spell: (spell.level, spell.name),
+        ):
             info = describe_spell(spell, self.builder_class, level, scores)
             rows.append(
                 {
@@ -1374,8 +1582,80 @@ class AppState(rx.State):
         return rows
 
     @rx.var
+    def builder_cantrip_rows(self) -> list[dict[str, Any]]:
+        scores = self.builder_final_scores
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        rows = []
+        for spell in sorted((spell for spell in spells_for_class(self.builder_class) if spell.level == 0), key=lambda spell: spell.name):
+            info = describe_spell(spell, self.builder_class, level, scores)
+            rows.append({
+                "name": spell.name,
+                "selected": spell.name in self.builder_cantrip_selection,
+                "level_label": "Cantrip",
+                "headline": info["headline"],
+                "summary": f"{spell.school} · {info['meta']}",
+                "text": info["text"],
+            })
+        return rows
+
+    @rx.var
+    def builder_wizard_prepared_rows(self) -> list[dict[str, Any]]:
+        if self.builder_class != "Wizard":
+            return []
+        scores = self.builder_final_scores
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        rows = []
+        for name in self.builder_spell_selection:
+            spell = SPELLS[name]
+            info = describe_spell(spell, "Wizard", level, scores)
+            rows.append({
+                "name": name,
+                "selected": name in self.builder_prepared_spell_selection,
+                "level_label": info["level_label"],
+                "headline": info["headline"],
+                "summary": f"{spell.school} · {info['meta']}",
+                "text": info["text"],
+            })
+        return rows
+
+    @rx.var
+    def builder_magical_secret_rows(self) -> list[dict[str, Any]]:
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        if self.builder_class != "Bard" or not magical_secrets_count(level):
+            return []
+        scores = self.builder_final_scores
+        rows = []
+        for spell in sorted((spell for spell in SPELLS.values() if 0 < spell.level <= max_spell_level("Bard", level)), key=lambda spell: (spell.level, spell.name)):
+            info = describe_spell(spell, "Bard", level, scores)
+            rows.append({
+                "name": spell.name,
+                "selected": spell.name in self.builder_magical_secrets_selection,
+                "level_label": info["level_label"],
+                "headline": info["headline"],
+                "summary": f"{spell.school} · {info['meta']}",
+                "text": info["text"],
+            })
+        return rows
+
+    @rx.var
+    def builder_high_elf_cantrip_rows(self) -> list[dict[str, Any]]:
+        if self.builder_ancestry != "High Elf":
+            return []
+        return [
+            {
+                "name": spell.name,
+                "selected": spell.name in self.builder_innate_spell_selection,
+                "level_label": "Innate cantrip",
+                "headline": "Ancestry trait",
+                "summary": f"Wizard cantrip · {spell.school}",
+                "text": spell.text,
+            }
+            for spell in sorted((spell for spell in spells_for_class("Wizard") if spell.level == 0), key=lambda spell: spell.name)
+        ]
+
+    @rx.var
     def builder_class_is_caster(self) -> bool:
-        return len(spells_for_class(self.builder_class)) > 0
+        return casting_profile(self.builder_class).mode != "none"
 
     @rx.var
     def builder_spell_hint(self) -> str:
@@ -1393,6 +1673,34 @@ class AppState(rx.State):
         spells = ", ".join(self.builder_spell_selection) or "no spells yet"
         return f"Carrying: {weapons}. Spellbook: {spells}."
 
+    # These replace the prototype spell copy above with profile-aware guidance.
+    @rx.var
+    def builder_spell_hint(self) -> str:
+        if not self.builder_class_is_caster:
+            return f"{self.builder_class}s have no class spellcasting in this SRD builder."
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        summary = casting_summary(self.builder_class, level, self.builder_final_scores)
+        if not summary["max_spell_level"]:
+            return f"{self.builder_class} spellcasting begins at level 2. Ancestry traits, if any, remain separate."
+        mode = str(summary["mode"])
+        limit = summary["spellbook_limit"] if mode == "spellbook" else summary["prepared_limit"] if mode == "prepared" else summary["known_limit"]
+        return f"{mode.title()} caster: select up to {limit} leveled spells available through {summary['max_spell_level']}th level."
+
+    @rx.var
+    def builder_loadout_summary(self) -> str:
+        weapons = ", ".join(self.builder_weapon_selection) or "no weapons yet"
+        if not self.builder_class_is_caster:
+            return f"Carrying: {weapons}."
+        cantrips = ", ".join(self.builder_cantrip_selection) or "no cantrips"
+        spells = ", ".join(self.builder_spell_selection) or "no leveled spells"
+        innate = _ancestry_innate_spells(
+            self.builder_ancestry,
+            _safe_int(self.builder_level, 1, minimum=1, maximum=20),
+            self.builder_innate_spell_selection[0] if self.builder_innate_spell_selection else "",
+        )
+        result = f"Carrying: {weapons}. Cantrips: {cantrips}. Leveled spells: {spells}."
+        return result + (f" Innate traits: {', '.join(innate)}." if innate else "")
+
     @rx.var
     def builder_preview_stats(self) -> dict[str, Any]:
         """The derived numbers for the Review step, computed from wizard state."""
@@ -1406,6 +1714,22 @@ class AppState(rx.State):
             "initiative": format_bonus(ability_modifier(scores["dex"])),
             "spell_dc": spell_save_dc(klass, level, scores),
             "spell_attack": format_bonus(spell_attack_bonus(klass, level, scores)),
+        }
+
+    @rx.var
+    def builder_magic_summary(self) -> dict[str, str]:
+        level = _safe_int(self.builder_level, 1, minimum=1, maximum=20)
+        summary = casting_summary(self.builder_class, level, self.builder_final_scores)
+        slots = summary["slots"]
+        slot_text = " · ".join(f"{slot}: {count}" for slot, count in slots.items()) or "No class slots"
+        main_limit = summary["spellbook_limit"] if summary["mode"] == "spellbook" else summary["prepared_limit"] if summary["mode"] == "prepared" else summary["known_limit"]
+        return {
+            "cantrip_limit": str(summary["cantrips"]),
+            "main_limit": str(main_limit),
+            "prepared_limit": str(summary["prepared_limit"]),
+            "slots": slot_text,
+            "mode": str(summary["mode"]),
+            "magical_secrets": str(summary["magical_secrets"]),
         }
 
     @rx.var
@@ -1451,6 +1775,14 @@ class AppState(rx.State):
     @rx.var
     def builder_has_notes(self) -> bool:
         return bool(self.builder_notes.strip())
+
+    @rx.var
+    def builder_selected_spell_rows(self) -> list[dict[str, Any]]:
+        return [row for row in self.builder_cantrip_rows + self.builder_spell_rows if row["selected"]]
+
+    @rx.var
+    def builder_has_spells(self) -> bool:
+        return bool(self.builder_cantrip_selection or self.builder_spell_selection or self.builder_innate_spell_selection)
 
     @rx.var
     def sheet_attack_rows(self) -> list[dict[str, Any]]:
@@ -1612,6 +1944,7 @@ class AppState(rx.State):
             "shield": False,
             "skills": "",
             "saves": "",
+            "spell_state": _blank_spell_state(),
             "notes": "",
             "campaign_names": "",
         }
@@ -1640,6 +1973,131 @@ class AppState(rx.State):
             "spell_attack": format_bonus(spell_attack_bonus(klass, level, scores)),
             "perception": format_bonus(skill_bonus(scores["wis"], level, proficient=True)),
             "stealth": format_bonus(skill_bonus(scores["dex"], level, proficient=False)),
+        }
+
+    @rx.var
+    def sheet_spell_rows(self) -> list[dict[str, Any]]:
+        """All selected spells, retaining the distinction between their sources."""
+        character = self.primary_character
+        klass = character["character_class"] or "Fighter"
+        scores = {key: int(character[key]) for key in ABILITY_KEYS}
+        level = _safe_int(character["level"], 1, minimum=1, maximum=20)
+        state = character.get("spell_state", _blank_spell_state())
+        rows: list[dict[str, Any]] = []
+
+        def add(names: list[str], source: str, spell_class: str = klass) -> None:
+            for name in names:
+                spell = SPELLS.get(name)
+                if spell is None:
+                    continue
+                info = describe_spell(spell, spell_class, level, scores)
+                rows.append({
+                    "name": name,
+                    "source": source,
+                    "level_label": info["level_label"],
+                    "headline": info["headline"],
+                    "summary": f"{spell.school} · {info['meta']}",
+                    "text": info["text"],
+                    "higher_level": " ".join(spell.higher_level),
+                })
+
+        add(state["cantrips"], "Cantrip")
+        if klass == "Wizard":
+            prepared = set(state["prepared"])
+            add(state["spellbook"] or state["known"], "Spellbook")
+            for row in rows:
+                if row["name"] in prepared and row["source"] == "Spellbook":
+                    row["source"] = "Prepared"
+        elif casting_profile(klass).mode == "prepared":
+            add(state["prepared"] or state["known"], "Prepared")
+        else:
+            add(state["known"], "Known")
+        add(state["magical_secrets"], "Magical Secret")
+        innate_class = "Wizard" if character["ancestry"] in {"High Elf", "Forest Gnome"} else "Sorcerer"
+        add(state["innate"], "Innate trait", innate_class)
+        return sorted(rows, key=lambda row: (SPELLS[row["name"]].level, row["name"], row["source"]))
+
+    @rx.var
+    def sheet_has_spells(self) -> bool:
+        return bool(self.sheet_spell_rows)
+
+    @rx.var
+    def primary_ability_rows(self) -> list[dict[str, str]]:
+        character = self.primary_character
+        return [
+            {"label": ABILITY_LABELS[key], "score": str(character[key]), "modifier": format_bonus(ability_modifier(int(character[key]))) }
+            for key in ABILITY_KEYS
+        ]
+
+    @rx.var
+    def primary_save_rows(self) -> list[dict[str, str]]:
+        character = self.primary_character
+        proficient = {entry.strip().lower() for entry in str(character["saves"]).split(",")}
+        level = _safe_int(character["level"], 1, minimum=1, maximum=20)
+        return [
+            {
+                "label": ABILITY_LABELS[key],
+                "bonus": format_bonus(skill_bonus(int(character[key]), level, proficient=ABILITY_LABELS[key].lower() in proficient)),
+                "proficient": ABILITY_LABELS[key].lower() in proficient,
+            }
+            for key in ABILITY_KEYS
+        ]
+
+    @rx.var
+    def primary_skill_rows(self) -> list[dict[str, str]]:
+        character = self.primary_character
+        proficient = {entry.strip().lower() for entry in str(character["skills"]).split(",")}
+        level = _safe_int(character["level"], 1, minimum=1, maximum=20)
+        rows = []
+        for skill, ability in SKILL_ABILITIES.items():
+            label = SKILL_LABELS[skill]
+            is_proficient = label.lower() in proficient
+            rows.append({
+                "label": label,
+                "ability": ability.upper(),
+                "bonus": format_bonus(skill_bonus(int(character[ability]), level, proficient=is_proficient)),
+                "proficient": is_proficient,
+            })
+        return rows
+
+    @rx.var
+    def primary_magic_summary(self) -> dict[str, str]:
+        character = self.primary_character
+        scores = {key: int(character[key]) for key in ABILITY_KEYS}
+        summary = casting_summary(character["character_class"], _safe_int(character["level"], 1, minimum=1, maximum=20), scores)
+        slots = summary["slots"]
+        slot_text = " · ".join(f"{level}: {count}" for level, count in slots.items()) or "No class slots"
+        limit = summary["spellbook_limit"] if summary["mode"] == "spellbook" else summary["prepared_limit"] if summary["mode"] == "prepared" else summary["known_limit"]
+        return {
+            "mode": str(summary["mode"]).replace("spellbook", "spellbook caster").replace("pact", "Pact Magic").title(),
+            "ability": str(summary["ability"]) or "-",
+            "save_dc": str(summary["save_dc"]) if summary["save_dc"] is not None else "-",
+            "attack": format_bonus(int(summary["attack_bonus"])) if summary["attack_bonus"] is not None else "-",
+            "slots": slot_text,
+            "recovery": str(summary["slot_recovery"]),
+            "limit": str(limit),
+            "cantrips": str(summary["cantrips"]),
+            "max_spell_level": str(summary["max_spell_level"]),
+            "always_prepared": ", ".join(summary["always_prepared"]) or "",
+            "arcanum": ", ".join(str(item) for item in summary["mystic_arcanum"]) or "",
+        }
+
+    @rx.var
+    def primary_stats(self) -> dict[str, Any]:
+        character = self.primary_character
+        scores = {key: int(character[key]) for key in ABILITY_KEYS}
+        klass = character["character_class"] or "Fighter"
+        level = _safe_int(character["level"], 1, minimum=1, maximum=20)
+        magic = casting_summary(klass, level, scores)
+        return {
+            "hp": max_hp(klass, level, scores["con"]),
+            "ac": armor_class(scores["dex"], character["armor"], character["shield"]),
+            "proficiency": format_bonus(proficiency_bonus(level)),
+            "initiative": format_bonus(ability_modifier(scores["dex"])),
+            "spell_dc": magic["save_dc"] if magic["save_dc"] is not None else "-",
+            "spell_attack": format_bonus(int(magic["attack_bonus"])) if magic["attack_bonus"] is not None else "-",
+            "perception": format_bonus(skill_bonus(scores["wis"], level, proficient="perception" in str(character["skills"]).lower())),
+            "stealth": format_bonus(skill_bonus(scores["dex"], level, proficient="stealth" in str(character["skills"]).lower())),
         }
 
     @rx.var

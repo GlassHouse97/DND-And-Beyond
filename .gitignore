@@ -13,7 +13,7 @@ __pycache__/
 *.egg-info/
 *.pyc
 *.db
-data/
+/data/
 .env
 .env.production
 dist/
