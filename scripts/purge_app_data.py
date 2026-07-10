@@ -46,28 +46,30 @@ def main() -> int:
     # Import after the optional env file is loaded so the correct database is selected.
     from dnd_and_beyond import data_access
 
-    counts = data_access.user_data_counts()
-    target = "production Postgres" if data_access.IS_POSTGRES else "local SQLite"
-    total = sum(counts.values())
-    print(f"Target: {target}")
-    print(f"User-created records: {total}")
-    print(", ".join(f"{table}={count}" for table, count in counts.items()))
+    try:
+        counts = data_access.user_data_counts()
+        target = "production Postgres" if data_access.IS_POSTGRES else "local SQLite"
+        total = sum(counts.values())
+        print(f"Target: {target}")
+        print(f"User-created records: {total}")
+        print(", ".join(f"{table}={count}" for table, count in counts.items()))
 
-    if args.dry_run:
-        print("DRY_RUN_OK")
+        if args.dry_run:
+            print("DRY_RUN_OK")
+            return 0
+        if not args.confirm:
+            print("Refusing to delete data without --confirm.", file=sys.stderr)
+            return 2
+
+        data_access.purge_user_data()
+        after = data_access.user_data_counts()
+        if any(after.values()):
+            print("Purge did not complete cleanly.", file=sys.stderr)
+            return 1
+        print("PURGE_OK")
         return 0
-    if not args.confirm:
-        print("Refusing to delete data without --confirm.", file=sys.stderr)
-        return 2
-
-    data_access.purge_user_data()
-    after = data_access.user_data_counts()
-    if any(after.values()):
-        print("Purge did not complete cleanly.", file=sys.stderr)
-        return 1
-    data_access.close_database_connections()
-    print("PURGE_OK")
-    return 0
+    finally:
+        data_access.close_database_connections()
 
 
 if __name__ == "__main__":
