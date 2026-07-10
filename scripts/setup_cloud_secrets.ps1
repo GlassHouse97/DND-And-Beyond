@@ -102,11 +102,13 @@ foreach ($variable in $secretMap.Keys) {
 }
 
 $secretBindings = ($secretMap.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value):latest" }) -join ","
+$legacyEnvironmentNames = ($secretMap.Keys | ForEach-Object { [string]$_ }) -join ","
 Write-Host "==> Switching Cloud Run to Secret Manager references" -ForegroundColor Cyan
 Invoke-Gcloud @(
     "run", "services", "update", $ServiceName,
     "--region", $Region,
     "--service-account", $runtimeServiceAccount,
+    "--remove-env-vars", $legacyEnvironmentNames,
     "--update-secrets", $secretBindings
 )
 
