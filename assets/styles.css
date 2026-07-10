@@ -1120,3 +1120,102 @@ select {
     flex: 1 1 90px;
   }
 }
+
+/* ---------- Auth screen ---------- */
+
+.auth-card .segmented {
+  margin: 14px 0 20px;
+}
+
+.auth-form-area {
+  animation: surface-enter 240ms var(--ease) both;
+}
+
+.auth-title {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: clamp(1.55rem, 2.6vw, 2.1rem);
+  line-height: 1.12;
+}
+
+.auth-lead {
+  margin: 0 0 18px;
+  color: #5d4e42;
+  line-height: 1.55;
+}
+
+.field-label {
+  margin: 0 0 6px;
+  color: #6d5a44;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.form-notice {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff8ea;
+  color: var(--ink);
+  line-height: 1.5;
+  animation: surface-enter 240ms var(--ease) both;
+}
+
+.form-notice.error {
+  border-color: rgba(157, 31, 34, 0.45);
+  background: #f9e4dd;
+  color: var(--red-dark);
+}
+
+.form-notice.success {
+  border-color: rgba(88, 116, 68, 0.5);
+  background: #eaf0dc;
+  color: #3e5a30;
+}
+
+.auth-hero {
+  justify-content: center;
+}
+
+.step-list {
+  margin-top: 22px;
+}
+
+.step-row {
+  width: 100%;
+}
+
+.step-num {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  color: var(--gold);
+  border: 1px solid rgba(201, 154, 59, 0.65);
+  background: rgba(255, 248, 235, 0.08);
+}
+
+.step-title {
+  margin: 0 0 2px;
+  font-weight: 900;
+  color: var(--cream);
+}
+
+.step-text {
+  margin: 0;
+  color: rgba(255, 248, 235, 0.72);
+  font-size: 0.94rem;
+  line-height: 1.5;
+}

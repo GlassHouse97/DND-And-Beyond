@@ -99,58 +99,146 @@ def footer() -> rx.Component:
     )
 
 
+def auth_field(label: str, control: rx.Component) -> rx.Component:
+    return rx.box(
+        rx.text(label, class_name="field-label"),
+        control,
+        width="100%",
+    )
+
+
+def auth_step(number: str, title: str, body: str) -> rx.Component:
+    return rx.hstack(
+        rx.box(number, class_name="step-num"),
+        rx.box(
+            rx.text(title, class_name="step-title"),
+            rx.text(body, class_name="step-text"),
+        ),
+        spacing="3",
+        align="start",
+        class_name="step-row",
+    )
+
+
 def auth_panel() -> rx.Component:
     return shell(
         rx.grid(
             rx.box(
-                rx.text("ACCOUNT", class_name="eyebrow"),
-                rx.heading("Your table, your account.", class_name="page-title"),
-                rx.text(
-                    "Characters and campaigns are saved to the verified email you use to log in.",
-                    class_name="lead",
-                ),
+                rx.text("YOUR ACCOUNT", class_name="eyebrow"),
                 rx.hstack(
-                    rx.button("Login", on_click=AppState.set_auth_mode("login"), class_name=rx.cond(AppState.auth_mode == "login", "tab active", "tab")),
-                    rx.button("Register", on_click=AppState.set_auth_mode("register"), class_name=rx.cond(AppState.auth_mode == "register", "tab active", "tab")),
+                    rx.button("Sign In", on_click=AppState.set_auth_mode("login"), class_name=rx.cond(AppState.auth_mode == "login", "tab active", "tab")),
+                    rx.button("Create Account", on_click=AppState.set_auth_mode("register"), class_name=rx.cond(AppState.auth_mode == "register", "tab active", "tab")),
                     rx.button("Verify Email", on_click=AppState.set_auth_mode("verify"), class_name=rx.cond(AppState.auth_mode == "verify", "tab active", "tab")),
                     class_name="segmented",
                 ),
-                rx.form(
-                    rx.vstack(
-                        rx.cond(
-                            AppState.auth_mode == "register",
-                            rx.input(name="display_name", placeholder="Display name", class_name="field"),
-                            rx.fragment(),
+                # Keyed by mode so swapping tabs remounts the form: headings and
+                # fields fade in together, and the email prefill takes effect.
+                rx.box(
+                    rx.heading(
+                        rx.match(
+                            AppState.auth_mode,
+                            ("register", "Create your account"),
+                            ("verify", "Check your inbox"),
+                            "Welcome back",
                         ),
-                        rx.input(name="email", placeholder="Email address", type="email", class_name="field"),
-                        rx.cond(
-                            AppState.auth_mode == "verify",
-                            rx.input(name="verification_token", placeholder="Verification code", class_name="field"),
-                            rx.input(name="password", placeholder="Password", type="password", class_name="field"),
-                        ),
-                        rx.button(rx.icon("key-round", size=18), rx.text("Continue"), type="submit", class_name="primary-action"),
-                        rx.text(AppState.auth_message, class_name="form-note"),
-                        spacing="3",
+                        class_name="auth-title",
                     ),
-                    on_submit=AppState.auth_submit,
-                    auto_complete="off",
-                    reset_on_submit=True,
+                    rx.text(
+                        rx.match(
+                            AppState.auth_mode,
+                            ("register", "Pick a name your party will see. We'll email you a code to confirm the address is yours."),
+                            ("verify", "Paste the verification code we emailed you and your account goes live."),
+                            "Sign in with the email and password you registered with.",
+                        ),
+                        class_name="auth-lead",
+                    ),
+                    rx.form(
+                        rx.vstack(
+                            rx.cond(
+                                AppState.auth_mode == "register",
+                                auth_field(
+                                    "Display name",
+                                    rx.input(name="display_name", placeholder="What your party calls you", class_name="field", custom_attrs={"autoComplete": "nickname"}),
+                                ),
+                                rx.fragment(),
+                            ),
+                            auth_field(
+                                "Email address",
+                                rx.input(name="email", placeholder="you@example.com", type="email", default_value=AppState.auth_email, class_name="field", custom_attrs={"autoComplete": "email"}),
+                            ),
+                            rx.cond(
+                                AppState.auth_mode == "verify",
+                                auth_field(
+                                    "Verification code",
+                                    rx.input(name="verification_token", placeholder="Paste the code from the email", class_name="field"),
+                                ),
+                                auth_field(
+                                    "Password",
+                                    rx.input(
+                                        name="password",
+                                        placeholder=rx.cond(AppState.auth_mode == "register", "At least 8 characters", "Your password"),
+                                        type="password",
+                                        class_name="field",
+                                        custom_attrs={"autoComplete": rx.cond(AppState.auth_mode == "register", "new-password", "current-password")},
+                                    ),
+                                ),
+                            ),
+                            rx.button(
+                                rx.icon("key-round", size=18),
+                                rx.text(
+                                    rx.match(
+                                        AppState.auth_mode,
+                                        ("register", "Create Account"),
+                                        ("verify", "Verify Email"),
+                                        "Sign In",
+                                    )
+                                ),
+                                type="submit",
+                                loading=AppState.auth_busy,
+                                class_name="primary-action auth-submit",
+                            ),
+                            spacing="3",
+                        ),
+                        on_submit=AppState.auth_submit,
+                        reset_on_submit=False,
+                    ),
+                    rx.cond(
+                        AppState.auth_message != "",
+                        rx.box(
+                            rx.text(AppState.auth_message),
+                            class_name=rx.match(
+                                AppState.auth_message_kind,
+                                ("error", "form-notice error"),
+                                ("success", "form-notice success"),
+                                "form-notice",
+                            ),
+                        ),
+                        rx.fragment(),
+                    ),
+                    key=AppState.auth_mode,
+                    class_name="auth-form-area",
                 ),
-                class_name="panel strong-panel",
+                class_name="panel strong-panel auth-card",
             ),
             rx.box(
-                rx.text("LOCAL TEST MODE", class_name="eyebrow"),
-                rx.heading("Blank by default. Personal once verified.", class_name="hero-heading"),
-                rx.text("Registration writes a verification message to the local dev outbox until SMTP is configured for hosting.", class_name="lead"),
-                rx.grid(
-                    stat_tile("Data", "Blank", "per account"),
-                    stat_tile("Login", "Email", "verification"),
-                    stat_tile("Roles", "DM/Player", "per campaign"),
-                    columns="3",
-                    spacing="3",
-                    class_name="hero-stats",
+                rx.text("DND AND BEYOND", class_name="eyebrow"),
+                rx.heading("Your party's 5e command center.", class_name="hero-heading"),
+                rx.text(
+                    "Build characters with the math done for you, keep every sheet in "
+                    "one place, and run campaigns your whole table can follow.",
+                    class_name="lead",
                 ),
-                class_name="hero-panel",
+                rx.vstack(
+                    auth_step("1", "Create your account", "Register with your email and a password of 8+ characters."),
+                    auth_step("2", "Verify your email", "We send a code to your inbox — paste it on the Verify Email tab."),
+                    auth_step("3", "Build your first hero", "The guided builder handles hit points, armor class, and attack rolls."),
+                    auth_step("4", "Gather your party", "Join with your DM's invite code, or request a seat in an open campaign."),
+                    spacing="4",
+                    align="start",
+                    width="100%",
+                    class_name="step-list",
+                ),
+                class_name="hero-panel auth-hero",
             ),
             columns="2",
             spacing="5",

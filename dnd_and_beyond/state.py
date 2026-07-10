@@ -313,6 +313,12 @@ class AppState(rx.State):
     # user back on the page they were viewing instead of bouncing them around.
     current_view: str = rx.LocalStorage("auth", name="dnd_current_view")
     auth_mode: str = "login"
+    # Auth form UX: busy drives the submit spinner, kind colors the message
+    # (info/success/error), and auth_email keeps the typed email filled in
+    # when the form switches between Sign In / Create Account / Verify.
+    auth_busy: bool = False
+    auth_message_kind: str = "info"
+    auth_email: str = ""
     is_authenticated: bool = False
     user_id: int = 0
     user_email: str = ""
@@ -395,20 +401,35 @@ class AppState(rx.State):
             self.current_view = "dashboard"
         self.load_user_data()
 
-    async def auth_submit(self, form_data: dict[str, Any]) -> None:
-        if self.auth_mode == "register":
-            await self.register(form_data)
-        elif self.auth_mode == "verify":
-            self.verify_email(form_data)
-        else:
-            await self.login(form_data)
+    def _set_auth_message(self, text: str, kind: str = "info") -> None:
+        self.auth_message = text
+        self.auth_message_kind = kind
+
+    async def auth_submit(self, form_data: dict[str, Any]):
+        # Hashing and email delivery take real time; flip the busy flag and
+        # push it to the client first so the submit button shows a spinner
+        # instead of a dead half-second.
+        self.auth_busy = True
+        yield
+        try:
+            if self.auth_mode == "register":
+                await self.register(form_data)
+            elif self.auth_mode == "verify":
+                self.verify_email(form_data)
+            else:
+                await self.login(form_data)
+        finally:
+            self.auth_busy = False
 
     async def register(self, form_data: dict[str, Any]) -> None:
         email = form_data.get("email", "").strip().lower()
         password = form_data.get("password", "")
         name = form_data.get("display_name", "Table Friend").strip() or "Table Friend"
+        self.auth_email = email
         if "@" not in email or len(password) < 8:
-            self.auth_message = "Use an email and a password with at least 8 characters."
+            self._set_auth_message(
+                "Use a valid email and a password with at least 8 characters.", "error"
+            )
             return
 
         token = secrets.token_urlsafe(24)
@@ -417,7 +438,10 @@ class AppState(rx.State):
         password_hash = await asyncio.to_thread(_hash_password, password)
         created, reason = data_access.create_user(email, password_hash, name, token)
         if not created:
-            self.auth_message = "That email already has a verified account. Try logging in."
+            self._set_auth_message(
+                "That email already has a verified account. Try signing in instead.",
+                "error",
+            )
             return
 
         # Run the (potentially slow) email send off the event loop so one
@@ -426,41 +450,66 @@ class AppState(rx.State):
             delivery = await asyncio.to_thread(send_verification_email, email, token)
         except EmailDeliveryError as exc:
             self.auth_mode = "verify"
-            self.auth_message = f"Account created, but the verification email failed: {exc}"
+            self._set_auth_message(
+                f"Account created, but the verification email failed: {exc}", "error"
+            )
             return
         self.auth_mode = "verify"
-        self.auth_message = (
-            "Verification email sent. For local testing, open "
-            f"{delivery} and paste the code here."
-            if reason in {"created", "resent"}
-            else "Verification email sent."
-        )
+        if delivery == "smtp":
+            self._set_auth_message(
+                f"Account created! We emailed a verification code to {email}. "
+                "Check your inbox (and spam folder), then paste the code below.",
+                "success",
+            )
+        else:
+            self._set_auth_message(
+                f"Account created. Local testing: open {delivery} and paste the code below.",
+                "success",
+            )
 
     def verify_email(self, form_data: dict[str, Any]) -> None:
         email = form_data.get("email", "").strip().lower()
         token = _extract_verification_token(form_data.get("verification_token", ""))
+        if email:
+            self.auth_email = email
         if not email or not token:
-            self.auth_message = "Enter your email and verification code."
+            self._set_auth_message(
+                "Enter your email and the verification code from the email we sent.",
+                "error",
+            )
             return
         if data_access.verify_user_email(email, token):
             self.auth_mode = "login"
-            self.auth_message = "Email verified. You can log in now."
+            self._set_auth_message(
+                "Email verified! Sign in with your password to start playing.",
+                "success",
+            )
         else:
-            self.auth_message = "That verification code did not match."
+            self._set_auth_message(
+                "That verification code did not match. Double-check it, or register "
+                "again to get a fresh code.",
+                "error",
+            )
 
     async def login(self, form_data: dict[str, Any]) -> None:
         email = form_data.get("email", "").strip().lower()
         password = form_data.get("password", "")
+        if email:
+            self.auth_email = email
         user = data_access.get_user_by_email(email)
         password_ok = user is not None and await asyncio.to_thread(
             _verify_password, password, user["password_hash"]
         )
         if not password_ok:
-            self.auth_message = "Email or password was not recognized."
+            self._set_auth_message("Email or password was not recognized.", "error")
             return
         if not int(user["email_verified"]):
             self.auth_mode = "verify"
-            self.auth_message = "Verify your email before logging in."
+            self._set_auth_message(
+                "Almost there — this email still needs verifying. Paste the code "
+                "from the email we sent you.",
+                "info",
+            )
             return
 
         self.user_id = int(user["id"])
@@ -468,7 +517,7 @@ class AppState(rx.State):
         self.display_name = user["display_name"]
         self.is_authenticated = True
         self.session_token = _sign_session(self.user_id)
-        self.auth_message = ""
+        self._set_auth_message("", "info")
         self.current_view = "dashboard"
         self.load_user_data()
 
@@ -477,7 +526,8 @@ class AppState(rx.State):
         self.user_id = 0
         self.user_email = ""
         self.display_name = ""
-        self.auth_message = ""
+        self._set_auth_message("", "info")
+        self.auth_busy = False
         self.app_message = ""
         self.session_token = ""
         self.selected_character_id = 0
@@ -540,7 +590,7 @@ class AppState(rx.State):
 
     def set_auth_mode(self, mode: str) -> None:
         self.auth_mode = mode
-        self.auth_message = ""
+        self._set_auth_message("", "info")
 
     def set_sheet_tab(self, tab: str) -> None:
         self.sheet_tab = tab
@@ -651,7 +701,7 @@ class AppState(rx.State):
     def go(self, view: str) -> None:
         if view != "auth" and not self.is_authenticated:
             self.current_view = "auth"
-            self.auth_message = "Log in to see your characters and campaigns."
+            self._set_auth_message("Sign in to see your characters and campaigns.", "info")
             return
         self.current_view = view
 
