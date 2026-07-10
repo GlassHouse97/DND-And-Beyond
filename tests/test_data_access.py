@@ -154,12 +154,36 @@ def test_campaign_directory_and_join_request_flow(tmp_path, monkeypatch):
     ok, reason = data_access.create_join_request(campaign_id, newbie["id"])
     assert not ok and reason == "already_member"
 
+    # DM removal: only the DM can remove, never themselves; removal frees the
+    # player to request membership again.
+    newbie_member = next(
+        m for m in data_access.list_campaign_members(campaign_id) if m["user_id"] == newbie["id"]
+    )
+    dm_member = next(
+        m for m in data_access.list_campaign_members(campaign_id) if m["user_id"] == dm["id"]
+    )
+    ok, reason = data_access.remove_campaign_member(campaign_id, newbie_member["id"], newbie["id"])
+    assert not ok and reason == "not_dm"
+    ok, reason = data_access.remove_campaign_member(campaign_id, dm_member["id"], dm["id"])
+    assert not ok and reason == "cannot_remove_dm"
+    ok, reason = data_access.remove_campaign_member(campaign_id, newbie_member["id"], dm["id"])
+    assert ok and reason == "removed"
+    assert not any(
+        m["user_id"] == newbie["id"] for m in data_access.list_campaign_members(campaign_id)
+    )
+    ok, reason = data_access.remove_campaign_member(campaign_id, newbie_member["id"], dm["id"])
+    assert not ok and reason == "not_found"
+    ok, reason = data_access.create_join_request(campaign_id, newbie["id"])
+    assert ok and reason == "requested"
+
     # Decline path: a third user gets declined, then may ask again.
     data_access.create_user("later@example.com", "hash-3", "Later Larry", "t-later")
     data_access.verify_user_email("later@example.com", "t-later")
     larry = data_access.get_user_by_email("later@example.com")
     data_access.create_join_request(campaign_id, larry["id"])
-    larry_request = data_access.list_pending_join_requests(campaign_id)[0]["id"]
+    larry_request = next(
+        r for r in data_access.list_pending_join_requests(campaign_id) if r["user_id"] == larry["id"]
+    )["id"]
     ok, reason = data_access.resolve_join_request(larry_request, dm["id"], approve=False)
     assert ok and reason == "declined"
     assert not any(m["user_id"] == larry["id"] for m in data_access.list_campaign_members(campaign_id))

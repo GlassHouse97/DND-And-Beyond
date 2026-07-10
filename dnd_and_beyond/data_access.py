@@ -885,6 +885,30 @@ def resolve_join_request(request_id: int, dm_user_id: int, approve: bool) -> tup
     return True, new_status
 
 
+def remove_campaign_member(campaign_id: int, member_id: int, dm_user_id: int) -> tuple[bool, str]:
+    """Remove a player from a campaign. Only the DM may do this, and the DM's
+    own membership can never be removed (it anchors the campaign)."""
+    initialize_database()
+    with connect() as conn:
+        dm = conn.execute(
+            _q("SELECT id FROM campaign_members WHERE campaign_id = ? AND user_id = ? AND role = 'dm'"),
+            (campaign_id, dm_user_id),
+        ).fetchone()
+        if dm is None:
+            return False, "not_dm"
+        member = conn.execute(
+            _q("SELECT id, role FROM campaign_members WHERE id = ? AND campaign_id = ?"),
+            (member_id, campaign_id),
+        ).fetchone()
+        if member is None:
+            return False, "not_found"
+        if member["role"] == "dm":
+            return False, "cannot_remove_dm"
+        conn.execute(_q("DELETE FROM campaign_members WHERE id = ?"), (member_id,))
+        conn.commit()
+    return True, "removed"
+
+
 def update_member_hp(member_id: int, current_hp: int) -> None:
     initialize_database()
     with connect() as conn:

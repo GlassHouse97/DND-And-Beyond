@@ -1412,6 +1412,35 @@ def campaign_members_panel() -> rx.Component:
     )
 
 
+def remove_member_dialog(member: rx.Var[dict]) -> rx.Component:
+    """DM-only removal with an explicit confirmation."""
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(rx.icon("user-minus", size=16), rx.text("Remove"), class_name="danger-action"),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title("Remove ", member["display_name"], " from the campaign?"),
+            rx.alert_dialog.description(
+                "Their character still belongs to them, but their spot in this campaign — including HP and "
+                "location on the party board — goes away. They can come back later with an invite code or a new join request.",
+            ),
+            rx.flex(
+                rx.alert_dialog.cancel(rx.button("Keep them", class_name="secondary-action")),
+                rx.alert_dialog.action(
+                    rx.button(
+                        "Remove from campaign",
+                        on_click=lambda: AppState.remove_member(member["id"]),
+                        class_name="danger-action",
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+        ),
+    )
+
+
 def campaign_member_row(member: rx.Var[dict]) -> rx.Component:
     return rx.hstack(
         rx.vstack(
@@ -1433,6 +1462,11 @@ def campaign_member_row(member: rx.Var[dict]) -> rx.Component:
             member["role"] == "dm",
             rx.text("DM", class_name="role-chip dm"),
             rx.text("Player", class_name="role-chip"),
+        ),
+        rx.cond(
+            AppState.is_campaign_dm & (member["role"] != "dm"),
+            remove_member_dialog(member),
+            rx.fragment(),
         ),
         class_name="compact-row",
     )

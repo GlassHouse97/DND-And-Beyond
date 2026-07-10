@@ -905,6 +905,26 @@ class AppState(rx.State):
             self.browse_message = "That campaign no longer exists."
         self.public_campaigns = data_access.list_public_campaigns(self.user_id)
 
+    def remove_member(self, member_id: int) -> None:
+        """DM-only: remove a player from the open campaign (confirmed in the UI)."""
+        campaign_id = int(self.campaign.get("id") or 0)
+        if not campaign_id:
+            return
+        member = next((m for m in self.members if int(m["id"]) == int(member_id)), None)
+        name = member["display_name"] if member else "That player"
+        ok, reason = data_access.remove_campaign_member(campaign_id, int(member_id), self.user_id)
+        if not ok:
+            if reason == "not_dm":
+                self.app_message = "Only the campaign's DM can remove players."
+            elif reason == "cannot_remove_dm":
+                self.app_message = "The DM can't be removed from their own campaign."
+            else:
+                self.app_message = "That member is no longer in the campaign."
+            return
+        self.app_message = f"{name} was removed from the campaign. They can re-join with an invite code or a new request."
+        self.select_campaign(campaign_id)
+        self.public_campaigns = data_access.list_public_campaigns(self.user_id)
+
     def approve_join_request(self, request_id: int) -> None:
         self._resolve_join_request(int(request_id), approve=True)
 
