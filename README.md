@@ -215,6 +215,34 @@ Build, deploys with websocket-friendly settings (`--session-affinity`,
 once more so the app's real public URL is compiled into the frontend. Re-run
 the same command any time you want to ship an update.
 
+### Cloud-owned secrets and automatic deployment
+
+Production credentials are kept out of Git. Store the Neon connection string
+and Gmail App Password in a password manager as a recovery copy, then migrate
+the local deployment values into Google Secret Manager once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup_cloud_secrets.ps1 -ProjectId your-project-id
+```
+
+This creates a dedicated Cloud Run runtime identity. It can read only the
+specific Secret Manager values the app needs; the local `.env.production` file
+is no longer used for routine deployments.
+
+To connect GitHub and deploy every push to `main`, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\create_github_build_trigger.ps1 -ProjectId your-project-id
+```
+
+The first run prints a GitHub authorization URL. Authorize the Cloud Build
+GitHub App for `GlassHouse97/DND-And-Beyond`, then run the same command again
+to create the trigger. From that point forward, Cloud Build uses
+`cloudbuild.github.yaml` to build and deploy the app from `main` automatically.
+
+`scripts\deploy_cloudrun.ps1` remains available for a manual deployment, but
+it reads only Secret Manager references after the migration.
+
 Without `SMTP_*` set, verification codes are written to a log file inside the
 container — fine for testing, but players can't read that file, so real email
 is required for public signups.

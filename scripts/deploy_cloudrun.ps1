@@ -1,47 +1,31 @@
-# Deploys DND and Beyond to Google Cloud Run.
+# Deploy DND and Beyond to Cloud Run using Secret Manager-backed configuration.
 #
-# Prerequisites (one-time):
-#   1. Install the gcloud CLI and run: gcloud auth login
-#   2. Create a Google Cloud project (console.cloud.google.com) with billing enabled
-#      (usage at friends-group scale stays inside the free tier).
-#   3. Copy .env.production.example to .env.production and fill it in.
+# One-time setup:
+#   powershell -ExecutionPolicy Bypass -File scripts\setup_cloud_secrets.ps1 -ProjectId your-project-id
 #
-# Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts\deploy_cloudrun.ps1 -ProjectId your-project-id
-#
-# The frontend needs the app's public URL baked in at build time, so the first
-# ever deploy builds twice: once to create the service and learn its URL, then
-# again with that URL compiled in. Later deploys build once.
+# After setup, this script never reads or uploads local production credentials.
 
 param(
     [Parameter(Mandatory = $true)][string]$ProjectId,
     [string]$Region = "us-east1",
-    [string]$ServiceName = "dnd-and-beyond"
+    [string]$ServiceName = "dnd-and-beyond",
+    [string]$RuntimeServiceAccountName = "dnd-and-beyond-runtime"
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
-# --- read .env.production ---------------------------------------------------
-$envFile = Join-Path $repoRoot ".env.production"
-if (-not (Test-Path $envFile)) {
-    Write-Error "Missing .env.production - copy .env.production.example and fill it in."
-}
-$prodVars = @{}
-foreach ($line in Get-Content $envFile) {
-    $trimmed = $line.Trim()
-    if ($trimmed -eq "" -or $trimmed.StartsWith("#")) { continue }
-    $name, $value = $trimmed -split "=", 2
-    $prodVars[$name.Trim()] = $value.Trim()
-}
-foreach ($required in @("DATABASE_URL", "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM")) {
-    if (-not $prodVars.ContainsKey($required) -or $prodVars[$required] -eq "") {
-        Write-Error "Missing $required in .env.production"
-    }
-}
-
+$runtimeServiceAccount = "$RuntimeServiceAccountName@$ProjectId.iam.gserviceaccount.com"
 $image = "$Region-docker.pkg.dev/$ProjectId/dnd-and-beyond/app"
+$secretBindings = @(
+    "DATABASE_URL=dnd-and-beyond-database-url:latest",
+    "SMTP_HOST=dnd-and-beyond-smtp-host:latest",
+    "SMTP_PORT=dnd-and-beyond-smtp-port:latest",
+    "SMTP_USERNAME=dnd-and-beyond-smtp-username:latest",
+    "SMTP_PASSWORD=dnd-and-beyond-smtp-password:latest",
+    "SMTP_FROM=dnd-and-beyond-smtp-from:latest"
+) -join ","
 
 function Invoke-Gcloud {
     param([string[]]$GcloudArgs)
@@ -60,52 +44,44 @@ function Invoke-GcloudOptional {
     finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
-    [PSCustomObject]@{
-        ExitCode = $exitCode
-        Output = $output
-    }
+    [PSCustomObject]@{ ExitCode = $exitCode; Output = $output }
 }
 
 Write-Host "==> Configuring project $ProjectId" -ForegroundColor Cyan
 Invoke-Gcloud @("config", "set", "project", $ProjectId)
-Invoke-Gcloud @("services", "enable", "run.googleapis.com", "cloudbuild.googleapis.com", "artifactregistry.googleapis.com")
+Invoke-Gcloud @("services", "enable", "run.googleapis.com", "cloudbuild.googleapis.com", "artifactregistry.googleapis.com", "secretmanager.googleapis.com")
 
-# Create the image repository if it does not exist yet.
+foreach ($secretName in @(
+    "dnd-and-beyond-database-url",
+    "dnd-and-beyond-smtp-host",
+    "dnd-and-beyond-smtp-port",
+    "dnd-and-beyond-smtp-username",
+    "dnd-and-beyond-smtp-password",
+    "dnd-and-beyond-smtp-from"
+)) {
+    $secretCheck = Invoke-GcloudOptional @("secrets", "describe", $secretName)
+    if ($secretCheck.ExitCode -ne 0) {
+        Write-Error "Missing Secret Manager secret '$secretName'. Run scripts\setup_cloud_secrets.ps1 first."
+    }
+}
+
+$runtimeCheck = Invoke-GcloudOptional @("iam", "service-accounts", "describe", $runtimeServiceAccount)
+if ($runtimeCheck.ExitCode -ne 0) {
+    Write-Error "Missing runtime service account '$runtimeServiceAccount'. Run scripts\setup_cloud_secrets.ps1 first."
+}
+
 $repositoryCheck = Invoke-GcloudOptional @("artifacts", "repositories", "describe", "dnd-and-beyond", "--location", $Region)
 if ($repositoryCheck.ExitCode -ne 0) {
     Write-Host "==> Creating Artifact Registry repository" -ForegroundColor Cyan
     Invoke-Gcloud @("artifacts", "repositories", "create", "dnd-and-beyond", "--repository-format", "docker", "--location", $Region)
 }
 
-# If the service already exists we know its URL and can build correctly once.
 $serviceCheck = Invoke-GcloudOptional @("run", "services", "describe", $ServiceName, "--region", $Region, "--format", "value(status.url)")
 $serviceUrl = $serviceCheck.Output | Select-Object -First 1
-if ($serviceCheck.ExitCode -ne 0) { $serviceUrl = "" }
-$firstDeploy = [string]::IsNullOrWhiteSpace($serviceUrl)
+$firstDeploy = $serviceCheck.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($serviceUrl)
 if ($firstDeploy) {
-    $serviceUrl = "http://localhost:8080"  # placeholder for the bootstrap build
+    $serviceUrl = "http://localhost:8080"
     Write-Host "==> First deploy: bootstrap build (public URL not known yet)" -ForegroundColor Yellow
-}
-
-function Format-YamlValue {
-    param([string]$Value)
-    return "'" + $Value.Replace("'", "''") + "'"
-}
-
-function New-CloudRunEnvFile {
-    param([string]$ApiUrl)
-    $envVarsFile = New-TemporaryFile
-    $lines = @(
-        "DATABASE_URL: $(Format-YamlValue $prodVars['DATABASE_URL'])",
-        "APP_BASE_URL: $(Format-YamlValue $ApiUrl)",
-        "SMTP_HOST: $(Format-YamlValue $prodVars['SMTP_HOST'])",
-        "SMTP_PORT: $(Format-YamlValue $prodVars['SMTP_PORT'])",
-        "SMTP_USERNAME: $(Format-YamlValue $prodVars['SMTP_USERNAME'])",
-        "SMTP_PASSWORD: $(Format-YamlValue $prodVars['SMTP_PASSWORD'])",
-        "SMTP_FROM: $(Format-YamlValue $prodVars['SMTP_FROM'])"
-    )
-    Set-Content -LiteralPath $envVarsFile.FullName -Value $lines -Encoding UTF8
-    return $envVarsFile
 }
 
 function Build-And-Deploy {
@@ -113,25 +89,21 @@ function Build-And-Deploy {
     Write-Host "==> Building image (API_URL=$ApiUrl)" -ForegroundColor Cyan
     Invoke-Gcloud @("builds", "submit", "--config", "cloudbuild.yaml", "--substitutions", "_API_URL=$ApiUrl,_IMAGE=$image")
 
-    Write-Host "==> Deploying to Cloud Run" -ForegroundColor Cyan
-    $envVarsFile = New-CloudRunEnvFile -ApiUrl $ApiUrl
-    try {
-        Invoke-Gcloud @(
-            "run", "deploy", $ServiceName,
-            "--image", $image,
-            "--region", $Region,
-            "--allow-unauthenticated",
-            "--session-affinity",
-            "--timeout", "3600",
-            "--min-instances", "0",
-            "--max-instances", "2",
-            "--memory", "1Gi",
-            "--env-vars-file", $envVarsFile.FullName
-        )
-    }
-    finally {
-        Remove-Item -LiteralPath $envVarsFile.FullName -Force -ErrorAction SilentlyContinue
-    }
+    Write-Host "==> Deploying to Cloud Run with Secret Manager references" -ForegroundColor Cyan
+    Invoke-Gcloud @(
+        "run", "deploy", $ServiceName,
+        "--image", $image,
+        "--region", $Region,
+        "--allow-unauthenticated",
+        "--session-affinity",
+        "--timeout", "3600",
+        "--min-instances", "0",
+        "--max-instances", "2",
+        "--memory", "1Gi",
+        "--service-account", $runtimeServiceAccount,
+        "--update-env-vars", "APP_BASE_URL=$ApiUrl",
+        "--update-secrets", $secretBindings
+    )
 }
 
 Build-And-Deploy -ApiUrl $serviceUrl
@@ -145,4 +117,3 @@ if ($firstDeploy) {
 
 Write-Host ""
 Write-Host "DONE. Your app is live at: $serviceUrl" -ForegroundColor Green
-Write-Host "Share that link with your players."

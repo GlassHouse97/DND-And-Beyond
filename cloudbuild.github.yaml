@@ -1,0 +1,36 @@
+# Runs automatically for pushes to main after the Cloud Build GitHub trigger is configured.
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "--build-arg"
+      - "API_URL=${_API_URL}"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/app:$SHORT_SHA"
+      - "."
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "${_SERVICE}"
+      - "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/app:$SHORT_SHA"
+      - "--region=${_REGION}"
+      - "--allow-unauthenticated"
+      - "--session-affinity"
+      - "--timeout=3600"
+      - "--min-instances=0"
+      - "--max-instances=2"
+      - "--memory=1Gi"
+      - "--service-account=dnd-and-beyond-runtime@$PROJECT_ID.iam.gserviceaccount.com"
+      - "--update-env-vars=APP_BASE_URL=${_API_URL}"
+      - "--update-secrets=DATABASE_URL=dnd-and-beyond-database-url:latest,SMTP_HOST=dnd-and-beyond-smtp-host:latest,SMTP_PORT=dnd-and-beyond-smtp-port:latest,SMTP_USERNAME=dnd-and-beyond-smtp-username:latest,SMTP_PASSWORD=dnd-and-beyond-smtp-password:latest,SMTP_FROM=dnd-and-beyond-smtp-from:latest"
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/app:$SHORT_SHA"
+substitutions:
+  _API_URL: "https://dnd-and-beyond-5l2kuhf5lq-ue.a.run.app"
+  _REGION: "us-east1"
+  _REPOSITORY: "dnd-and-beyond"
+  _SERVICE: "dnd-and-beyond"
+options:
+  logging: CLOUD_LOGGING_ONLY
