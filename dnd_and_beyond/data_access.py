@@ -58,6 +58,19 @@ LEGACY_DATA_DIR = _data_dir()
 # distinguishable from a member whose HP was never set.
 HP_UNSET = -1
 
+# User-created records only. Rule catalogs and app metadata survive a reset so
+# a fresh account can begin using the app immediately after the purge.
+USER_DATA_TABLES: tuple[str, ...] = (
+    "initiative_combatants",
+    "npcs",
+    "dm_notes",
+    "join_requests",
+    "campaign_members",
+    "characters",
+    "campaigns",
+    "users",
+)
+
 
 _SQLITE_ID_COLUMN = "id INTEGER PRIMARY KEY AUTOINCREMENT"
 _POSTGRES_ID_COLUMN = "id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
@@ -361,6 +374,35 @@ def initialize_database() -> None:
                 _run_versioned_migrations(conn)
                 conn.commit()
         _initialized_keys.add(key)
+
+
+def user_data_counts() -> dict[str, int]:
+    """Return counts for all user-created tables without changing any data."""
+    initialize_database()
+    with connect() as conn:
+        return {
+            table: int(conn.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()["count"])
+            for table in USER_DATA_TABLES
+        }
+
+
+def purge_user_data() -> dict[str, int]:
+    """Remove every account and user-created record, retaining rules and metadata."""
+    counts = user_data_counts()
+    with connect() as conn:
+        if IS_POSTGRES:
+            conn.execute(f"TRUNCATE TABLE {', '.join(USER_DATA_TABLES)} RESTART IDENTITY")
+        else:
+            for table in USER_DATA_TABLES:
+                conn.execute(f"DELETE FROM {table}")
+            try:
+                placeholders = ", ".join("?" for _ in USER_DATA_TABLES)
+                conn.execute(f"DELETE FROM sqlite_sequence WHERE name IN ({placeholders})", USER_DATA_TABLES)
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc).lower():
+                    raise
+        conn.commit()
+    return counts
 
 
 def _run_versioned_migrations(conn) -> None:

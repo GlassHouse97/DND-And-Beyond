@@ -8,7 +8,7 @@ from dnd_and_beyond.srd_catalog import (
     spells_for_class,
     weapon_attack_ability,
 )
-from dnd_and_beyond.state import CLASS_OPTIONS
+from dnd_and_beyond.state import CLASS_OPTIONS, _spell_hover_text
 
 DICE_PATTERN = re.compile(r"^\d+d\d+$")
 
@@ -89,6 +89,14 @@ def test_cantrip_damage_scales_with_level():
     assert "4d10" in describe_spell(SPELLS["Fire Bolt"], "Wizard", 17, SCORES)["headline"]
     # Leveled spells do not scale this way.
     assert "3d6" in describe_spell(SPELLS["Burning Hands"], "Wizard", 17, SCORES)["headline"]
+
+
+def test_spell_hover_text_keeps_current_math_and_a_concise_effect():
+    info = describe_spell(SPELLS["Fire Bolt"], "Wizard", 5, SCORES)
+    hover = _spell_hover_text(SPELLS["Fire Bolt"], info["headline"])
+    assert hover.startswith(info["headline"] + ".")
+    assert "You hurl" in hover
+    assert len(hover) <= len(info["headline"]) + 222
 
 
 def test_non_caster_gets_safe_placeholders():

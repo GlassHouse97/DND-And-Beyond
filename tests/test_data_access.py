@@ -189,3 +189,62 @@ def test_campaign_directory_and_join_request_flow(tmp_path, monkeypatch):
     assert not any(m["user_id"] == larry["id"] for m in data_access.list_campaign_members(campaign_id))
     ok, reason = data_access.create_join_request(campaign_id, larry["id"])
     assert ok and reason == "requested"
+
+
+def test_purge_user_data_removes_every_user_facing_record_and_resets_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(data_access, "DB_PATH", tmp_path / "app.db")
+
+    created, _ = data_access.create_user("reset@example.com", "hash", "Reset DM", "reset-token")
+    assert created is True
+    user = data_access.get_user_by_email("reset@example.com")
+    character_id = data_access.create_character(
+        user["id"],
+        {
+            "name": "Reset Hero",
+            "ancestry": "Human",
+            "character_class": "Fighter",
+            "background": "Soldier",
+            "level": 1,
+            "str": 15,
+            "dex": 14,
+            "con": 14,
+            "int": 10,
+            "wis": 12,
+            "cha": 8,
+            "armor": "chain mail",
+            "shield": True,
+            "skills": "Athletics",
+            "saves": "Strength, Constitution",
+            "notes": "",
+        },
+    )
+    campaign_id = data_access.create_campaign(user["id"], "Reset Campaign", "Soon", "RESET-1234")
+    with data_access.connect() as conn:
+        conn.execute("INSERT INTO dm_notes (campaign_id, title, body) VALUES (?, ?, ?)", (campaign_id, "Note", "Body"))
+        conn.execute(
+            "INSERT INTO npcs (campaign_id, name, armor_class, current_hp, max_hp) VALUES (?, ?, ?, ?, ?)",
+            (campaign_id, "Training NPC", 15, 7, 7),
+        )
+        conn.execute(
+            "INSERT INTO initiative_combatants (campaign_id, source_type, source_id, name, armor_class, current_hp, max_hp, initiative, turn_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (campaign_id, "character", character_id, "Reset Hero", 16, 12, 12, 14, 1),
+        )
+        conn.execute("INSERT INTO join_requests (campaign_id, user_id) VALUES (?, ?)", (campaign_id, user["id"]))
+        conn.commit()
+
+    counts = data_access.purge_user_data()
+    assert counts == {
+        "initiative_combatants": 1,
+        "npcs": 1,
+        "dm_notes": 1,
+        "join_requests": 1,
+        "campaign_members": 1,
+        "characters": 1,
+        "campaigns": 1,
+        "users": 1,
+    }
+    assert all(count == 0 for count in data_access.user_data_counts().values())
+
+    created, _ = data_access.create_user("fresh@example.com", "hash", "Fresh Start", "fresh-token")
+    assert created is True
+    assert data_access.get_user_by_email("fresh@example.com")["id"] == 1

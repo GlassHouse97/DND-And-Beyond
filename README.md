@@ -90,6 +90,26 @@ python -m pytest
 reflex run
 ```
 
+## Reset User Data
+
+To permanently remove every account, character, campaign, and other
+user-created record while retaining the SRD rules catalog and database schema:
+
+```powershell
+python scripts\purge_app_data.py --dry-run
+python scripts\purge_app_data.py --confirm
+```
+
+For the hosted Postgres database, use the gitignored production configuration:
+
+```powershell
+python scripts\purge_app_data.py --dry-run --production-env-file .env.production
+python scripts\purge_app_data.py --confirm --production-env-file .env.production
+```
+
+The purge is permanent. The production command should only be run when the
+whole group is intentionally starting over.
+
 Then open:
 
 ```text

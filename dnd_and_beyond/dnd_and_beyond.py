@@ -908,7 +908,7 @@ def spell_chip(row: rx.Var[dict]) -> rx.Component:
     return rx.button(
         rx.vstack(
             rx.hstack(
-                rx.text(row["name"], class_name="skill-name"),
+                spell_name_tooltip(row, "skill-name"),
                 rx.text(row["level_label"], class_name="level-pill"),
                 rx.spacer(),
                 rx.text(row["headline"], class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")),
@@ -930,7 +930,7 @@ def spell_chip(row: rx.Var[dict]) -> rx.Component:
 def cantrip_spell_chip(row: rx.Var[dict]) -> rx.Component:
     return rx.button(
         rx.vstack(
-            rx.hstack(rx.text(row["name"], class_name="skill-name"), rx.spacer(), rx.text(row["headline"], class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")), width="100%", align="center"),
+            rx.hstack(spell_name_tooltip(row, "skill-name"), rx.spacer(), rx.text(row["headline"], class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")), width="100%", align="center"),
             rx.text(row["summary"], class_name="skill-detail"),
             rx.text(row["text"], class_name="pick-text"),
             spacing="1", align="start", width="100%",
@@ -944,7 +944,7 @@ def cantrip_spell_chip(row: rx.Var[dict]) -> rx.Component:
 def prepared_spell_chip(row: rx.Var[dict]) -> rx.Component:
     return rx.button(
         rx.vstack(
-            rx.hstack(rx.text(row["name"], class_name="skill-name"), rx.spacer(), rx.text("Prepared", class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")), width="100%", align="center"),
+            rx.hstack(spell_name_tooltip(row, "skill-name"), rx.spacer(), rx.text("Prepared", class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")), width="100%", align="center"),
             rx.text(row["summary"], class_name="skill-detail"),
             spacing="1", align="start", width="100%",
         ),
@@ -957,7 +957,7 @@ def prepared_spell_chip(row: rx.Var[dict]) -> rx.Component:
 def magical_secret_chip(row: rx.Var[dict]) -> rx.Component:
     return rx.button(
         rx.vstack(
-            rx.hstack(rx.text(row["name"], class_name="skill-name"), rx.text(row["level_label"], class_name="level-pill"), rx.spacer(), rx.text("Secret", class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")), width="100%", align="center"),
+            rx.hstack(spell_name_tooltip(row, "skill-name"), rx.text(row["level_label"], class_name="level-pill"), rx.spacer(), rx.text("Secret", class_name=rx.cond(row["selected"], "bonus-pill on", "bonus-pill")), width="100%", align="center"),
             rx.text(row["summary"], class_name="skill-detail"),
             spacing="1", align="start", width="100%",
         ),
@@ -969,7 +969,7 @@ def magical_secret_chip(row: rx.Var[dict]) -> rx.Component:
 
 def high_elf_cantrip_chip(row: rx.Var[dict]) -> rx.Component:
     return rx.button(
-        rx.vstack(rx.text(row["name"], class_name="skill-name"), rx.text(row["text"], class_name="pick-text"), spacing="1", align="start", width="100%"),
+        rx.vstack(spell_name_tooltip(row, "skill-name"), rx.text(row["text"], class_name="pick-text"), spacing="1", align="start", width="100%"),
         type="button",
         on_click=lambda: AppState.toggle_builder_innate_spell(row["name"]),
         class_name=rx.cond(row["selected"], "pick-card active", "pick-card"),
@@ -1382,7 +1382,7 @@ def sheet_attack_card(row: rx.Var[dict]) -> rx.Component:
 def sheet_spell_card(row: rx.Var[dict]) -> rx.Component:
     return rx.box(
         rx.hstack(
-            rx.text(row["name"], class_name="skill-name"),
+            spell_name_tooltip(row, "skill-name"),
             rx.text(row["level_label"], class_name="level-pill"),
             rx.spacer(),
             rx.text(row["headline"], class_name="bonus-pill on"),
@@ -1453,6 +1453,17 @@ def classic_identity_field(label: str, value) -> rx.Component:
     )
 
 
+def spell_name_tooltip(row: rx.Var[dict], class_name: str) -> rx.Component:
+    """Expose a full, concise spell effect without widening dense sheet rows."""
+    return rx.tooltip(
+        rx.text(row["name"], class_name=class_name + " spell-name-tooltip"),
+        content=row["hover_text"],
+        aria_label=row["hover_text"],
+        side="top",
+        delay_duration=250,
+    )
+
+
 def classic_ability_card(row: rx.Var[dict]) -> rx.Component:
     return rx.box(
         rx.text(row["label"], class_name="classic-label"),
@@ -1503,7 +1514,7 @@ def classic_attack_row(row: rx.Var[dict]) -> rx.Component:
 def classic_spell_row(row: rx.Var[dict]) -> rx.Component:
     return rx.box(
         rx.hstack(
-            rx.text(row["name"], class_name="classic-row-label"),
+            rx.box(spell_name_tooltip(row, "classic-row-label"), class_name="classic-spell-name-wrap"),
             rx.spacer(),
             rx.text(row["level_label"], class_name="classic-source"),
             rx.text(row["source"], class_name="classic-source"),

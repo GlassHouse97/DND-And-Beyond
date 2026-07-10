@@ -1145,8 +1145,8 @@ select {
 }
 
 .classic-check.checked {
-  border: 3px solid var(--red-dark);
-  background: #fffaf0;
+  border-color: var(--red-dark);
+  background: var(--red-dark);
 }
 
 .classic-row-value {
@@ -1161,6 +1161,19 @@ select {
   color: var(--ink);
   font-size: 0.86rem;
   font-weight: 800;
+}
+
+.classic-spell-name-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.spell-name-tooltip {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .classic-row-ability,

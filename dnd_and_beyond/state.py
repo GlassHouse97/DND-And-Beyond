@@ -328,6 +328,14 @@ def _spell_state_to_value(state: dict[str, list[str]]) -> str:
     )
 
 
+def _spell_hover_text(spell: Any, headline: str) -> str:
+    """Compact, character-aware spell detail for the sheet's hover affordance."""
+    effect = " ".join(str(spell.text).split())
+    if len(effect) > 220:
+        effect = effect[:217].rsplit(" ", 1)[0] + "..."
+    return f"{headline}. {effect}" if effect else headline
+
+
 def _ancestry_innate_spells(ancestry: str, level: int, high_elf_choice: str = "") -> list[str]:
     """Fixed ancestry traits; they never grant access to a class spell list."""
     level = _safe_int(level, 1, minimum=1, maximum=20)
@@ -1577,6 +1585,7 @@ class AppState(rx.State):
                     "headline": info["headline"],
                     "summary": f"{spell.school} · {info['meta']}",
                     "text": info["text"],
+                    "hover_text": _spell_hover_text(spell, info["headline"]),
                 }
             )
         return rows
@@ -1595,6 +1604,7 @@ class AppState(rx.State):
                 "headline": info["headline"],
                 "summary": f"{spell.school} · {info['meta']}",
                 "text": info["text"],
+                "hover_text": _spell_hover_text(spell, info["headline"]),
             })
         return rows
 
@@ -1615,6 +1625,7 @@ class AppState(rx.State):
                 "headline": info["headline"],
                 "summary": f"{spell.school} · {info['meta']}",
                 "text": info["text"],
+                "hover_text": _spell_hover_text(spell, info["headline"]),
             })
         return rows
 
@@ -1634,6 +1645,7 @@ class AppState(rx.State):
                 "headline": info["headline"],
                 "summary": f"{spell.school} · {info['meta']}",
                 "text": info["text"],
+                "hover_text": _spell_hover_text(spell, info["headline"]),
             })
         return rows
 
@@ -1649,6 +1661,7 @@ class AppState(rx.State):
                 "headline": "Ancestry trait",
                 "summary": f"Wizard cantrip · {spell.school}",
                 "text": spell.text,
+                "hover_text": _spell_hover_text(spell, "Ancestry trait"),
             }
             for spell in sorted((spell for spell in spells_for_class("Wizard") if spell.level == 0), key=lambda spell: spell.name)
         ]
@@ -1999,6 +2012,7 @@ class AppState(rx.State):
                     "summary": f"{spell.school} · {info['meta']}",
                     "text": info["text"],
                     "higher_level": " ".join(spell.higher_level),
+                    "hover_text": _spell_hover_text(spell, info["headline"]),
                 })
 
         add(state["cantrips"], "Cantrip")
