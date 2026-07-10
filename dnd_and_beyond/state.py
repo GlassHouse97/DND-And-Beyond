@@ -280,6 +280,27 @@ def _hp_percent(current_hp: int, max_hp_value: int) -> str:
     return f"{percent}%"
 
 
+_ABILITY_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("STR", "strength"),
+    ("DEX", "dexterity"),
+    ("CON", "constitution"),
+    ("INT", "intelligence"),
+    ("WIS", "wisdom"),
+    ("CHA", "charisma"),
+)
+
+
+def _log_entry_view(row: dict[str, Any]) -> dict[str, Any]:
+    # created_at is stored as text in both dialects; the date part is enough
+    # for a session timeline.
+    return {
+        "id": int(row["id"]),
+        "title": row["title"],
+        "body": row["body"],
+        "date": str(row.get("created_at") or "")[:10],
+    }
+
+
 def _choice_to_id(choice: str) -> int:
     """Extract the character id from a "Name (#7)" dropdown choice."""
     match = re.search(r"\(#(\d+)\)\s*$", choice or "")
@@ -468,6 +489,7 @@ class AppState(rx.State):
     dm_notes: str = ""
     public_campaigns: list[dict[str, Any]] = []
     join_requests: list[dict[str, Any]] = []
+    session_log_entries: list[dict[str, Any]] = []
     browse_message: str = ""
 
     def restore_session(self) -> None:
@@ -639,6 +661,7 @@ class AppState(rx.State):
         self.dm_notes = ""
         self.public_campaigns = []
         self.join_requests = []
+        self.session_log_entries = []
         self.browse_message = ""
         self.current_view = "auth"
 
@@ -660,6 +683,7 @@ class AppState(rx.State):
             self.npcs = []
             self.initiative = []
             self.dm_notes = ""
+            self.session_log_entries = []
 
     def select_campaign(self, campaign_id: int) -> None:
         selected = data_access.get_campaign(campaign_id, self.user_id)
@@ -673,6 +697,9 @@ class AppState(rx.State):
         self.members = [self._member_view(row) for row in data_access.list_campaign_members(campaign_id)]
         self.npcs = [self._npc_view(row) for row in data_access.list_campaign_npcs(campaign_id)]
         self.initiative = self._initiative_from_campaign()
+        self.session_log_entries = [
+            _log_entry_view(row) for row in data_access.list_session_log_entries(campaign_id)
+        ]
         if selected.get("role") == "dm":
             self.dm_notes = data_access.get_dm_notes(campaign_id)
             self.join_requests = data_access.list_pending_join_requests(campaign_id)
@@ -1226,6 +1253,71 @@ class AppState(rx.State):
         data_access.update_campaign_details(campaign_id, session_log=value)
         self.campaign = {**self.campaign, "session_log": value}
 
+    def _reload_session_log(self, campaign_id: int) -> None:
+        self.session_log_entries = [
+            _log_entry_view(row) for row in data_access.list_session_log_entries(campaign_id)
+        ]
+
+    def add_session_log_entry(self, form_data: dict[str, Any]) -> None:
+        campaign_id = int(self.campaign.get("id") or 0)
+        if not campaign_id or self.campaign.get("role") != "dm":
+            return
+        ok, reason = data_access.create_session_log_entry(
+            campaign_id,
+            self.user_id,
+            str(form_data.get("title", "")),
+            str(form_data.get("body", "")),
+        )
+        if not ok:
+            self.app_message = (
+                "Write a title or what happened before adding the entry."
+                if reason == "empty"
+                else "Only the DM can write the session log."
+            )
+            return
+        self.app_message = ""
+        self._reload_session_log(campaign_id)
+
+    def delete_session_log_entry(self, entry_id: int) -> None:
+        campaign_id = int(self.campaign.get("id") or 0)
+        if not campaign_id:
+            return
+        data_access.delete_session_log_entry(int(entry_id), self.user_id)
+        self._reload_session_log(campaign_id)
+
+    def clear_legacy_session_log(self) -> None:
+        """Dismiss the pre-timeline free-text recap once the DM is done with it."""
+        self.save_session_log("")
+
+    def save_member_status(self, form_data: dict[str, Any]) -> None:
+        """DM edit of one member's campaign state: exact HP, location, conditions."""
+        campaign_id = int(self.campaign.get("id") or 0)
+        if not campaign_id or self.campaign.get("role") != "dm":
+            return
+        member_id = _safe_int(form_data.get("member_id"), 0)
+        if not member_id:
+            return
+        hp_text = str(form_data.get("current_hp", "")).strip()
+        current_hp = None if hp_text == "" else _safe_int(hp_text, 0, minimum=0, maximum=999)
+        ok = data_access.update_member_status(
+            member_id,
+            self.user_id,
+            current_hp=current_hp,
+            location=str(form_data.get("location", "")).strip(),
+            conditions=str(form_data.get("conditions", "")).strip(),
+        )
+        if not ok:
+            self.app_message = "Only this campaign's DM can edit player status."
+            return
+        self.select_campaign(campaign_id)
+
+    def open_character_sheet(self, character_id: int) -> None:
+        """Jump from a campaign roster row straight to that character's sheet."""
+        character_id = int(character_id)
+        if any(int(character["id"]) == character_id for character in self.characters):
+            self.selected_character_id = character_id
+        self.go("sheet")
+
     def save_next_session(self, value: str) -> None:
         campaign_id = int(self.campaign.get("id") or 0)
         if not campaign_id or self.campaign.get("role") != "dm":
@@ -1331,10 +1423,11 @@ class AppState(rx.State):
 
     def _member_view(self, row: dict[str, Any]) -> dict[str, Any]:
         character_name = row.get("character") or f"{row['display_name']} (no character)"
-        class_level = "DM" if not row.get("character_class") else f"{row['character_class']} {row['level']}"
+        has_character = bool(row.get("character_class"))
+        class_level = "DM" if not has_character else f"{row['character_class']} {row['level']}"
         max_hp_value = (
             max_hp(row["character_class"], int(row["level"]), int(row["constitution"]))
-            if row.get("character_class")
+            if has_character
             else 0
         )
         stored_hp = int(row["current_hp"])
@@ -1343,7 +1436,7 @@ class AppState(rx.State):
         else:
             current_hp = min(stored_hp, max_hp_value) if max_hp_value > 0 else 0
         hp_state = _hp_state(current_hp, max_hp_value)
-        return {
+        view = {
             "id": row["id"],
             "user_id": row.get("user_id", 0),
             "display_name": row["display_name"],
@@ -1357,7 +1450,46 @@ class AppState(rx.State):
             "location": row["location"],
             "conditions": row["active_conditions"],
             "role": row["role"],
+            "has_character": has_character,
+            "character_id": int(row.get("character_id") or 0),
+            "is_me": int(row.get("user_id") or 0) == self.user_id,
+            "identity": "",
+            "ac": 0,
+            "initiative": "",
+            "proficiency": "",
+            "passive_perception": 0,
+            "skills": "",
+            "saves": "",
+            "weapons": "",
         }
+        # Flat per-ability keys: Reflex's foreach can't iterate an untyped
+        # nested list inside a dict var, so the dialog reads these directly.
+        for _, column in _ABILITY_COLUMNS:
+            view[f"score_{column}"] = ""
+            view[f"mod_{column}"] = ""
+        if not has_character:
+            return view
+        # Quick-view detail: everything a player (or the DM) needs at the table
+        # without leaving the campaign hub.
+        level = int(row["level"])
+        skills_text = row.get("skill_proficiencies") or ""
+        view.update(
+            {
+                "identity": f"{row['ancestry']} {row['character_class']} · {row['background']}",
+                "ac": armor_class(int(row["dexterity"]), row["armor_name"], bool(row["has_shield"])),
+                "initiative": format_bonus(ability_modifier(int(row["dexterity"]))),
+                "proficiency": format_bonus(proficiency_bonus(level)),
+                "passive_perception": 10
+                + skill_bonus(int(row["wisdom"]), level, proficient="perception" in skills_text.lower()),
+                "skills": skills_text,
+                "saves": row.get("save_proficiencies") or "",
+                "weapons": row.get("weapons") or "",
+            }
+        )
+        for _, column in _ABILITY_COLUMNS:
+            view[f"score_{column}"] = str(row[column])
+            view[f"mod_{column}"] = format_bonus(ability_modifier(int(row[column])))
+        return view
 
     def _npc_view(self, row: dict[str, Any]) -> dict[str, Any]:
         return {

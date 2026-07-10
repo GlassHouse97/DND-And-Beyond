@@ -1694,37 +1694,128 @@ def campaign_page() -> rx.Component:
     )
 
 
-def session_log_panel() -> rx.Component:
-    """Session log: editable for the DM, read-only for players."""
+def session_log_entry_row(entry: rx.Var[dict]) -> rx.Component:
     return rx.box(
-        rx.heading("Session Log", class_name="section-heading"),
+        rx.hstack(
+            rx.text(entry["title"], class_name="row-title"),
+            rx.spacer(),
+            rx.text(entry["date"], class_name="log-date"),
+            rx.cond(AppState.is_campaign_dm, delete_log_entry_dialog(entry), rx.fragment()),
+            width="100%",
+            align="center",
+        ),
+        rx.text(entry["body"], class_name="log-body"),
+        class_name="log-entry",
+    )
+
+
+def delete_log_entry_dialog(entry: rx.Var[dict]) -> rx.Component:
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(rx.icon("trash-2", size=14), rx.text("Delete", class_name="sr-only"), class_name="icon-button danger small"),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title("Delete this log entry?"),
+            rx.alert_dialog.description(
+                "“", entry["title"], "” will be removed from the campaign history for everyone.",
+            ),
+            rx.flex(
+                rx.alert_dialog.cancel(rx.button("Keep it", class_name="secondary-action")),
+                rx.alert_dialog.action(
+                    rx.button(
+                        "Delete entry",
+                        on_click=lambda: AppState.delete_session_log_entry(entry["id"]),
+                        class_name="danger-action",
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+        ),
+    )
+
+
+def session_log_panel() -> rx.Component:
+    """The campaign's story so far: dated entries, newest first, DM-authored."""
+    return rx.box(
+        rx.hstack(
+            rx.heading("Session Log", class_name="section-heading"),
+            rx.spacer(),
+            rx.cond(
+                AppState.campaign["next_session"] != "",
+                rx.hstack(
+                    rx.icon("calendar-days", size=16),
+                    rx.text("Next: ", AppState.campaign["next_session"], class_name="meta-text"),
+                    spacing="2",
+                    align="center",
+                ),
+                rx.fragment(),
+            ),
+            width="100%",
+            align="center",
+        ),
         rx.cond(
             AppState.is_campaign_dm,
             rx.vstack(
-                rx.text_area(
-                    default_value=AppState.campaign["session_log"],
-                    on_blur=AppState.save_session_log,
-                    placeholder="What happened last session?",
-                    key=AppState.campaign["id"].to_string() + "-log",
-                    class_name="textarea tall",
-                ),
                 rx.input(
                     default_value=AppState.campaign["next_session"],
                     on_blur=AppState.save_next_session,
-                    placeholder="Next session date/time",
+                    placeholder="Next session date/time — players see this at the top",
                     key=AppState.campaign["id"].to_string() + "-next",
                     class_name="field",
                 ),
-                rx.text("Saves automatically when you click away.", class_name="hint"),
+                rx.form(
+                    rx.vstack(
+                        rx.input(name="title", placeholder="Entry title — e.g. Session 3: Into the caves", class_name="field"),
+                        rx.text_area(
+                            name="body",
+                            placeholder="What happened? Who did the party meet, what did they find, and where did it end?",
+                            class_name="textarea",
+                        ),
+                        rx.button(rx.icon("plus", size=16), rx.text("Add to the log"), type="submit", class_name="primary-action"),
+                        spacing="2",
+                        align="stretch",
+                    ),
+                    on_submit=AppState.add_session_log_entry,
+                    reset_on_submit=True,
+                ),
                 spacing="2",
                 align="stretch",
+                class_name="log-composer",
             ),
-            rx.vstack(
-                rx.text(AppState.campaign["session_log"], class_name="body-text"),
-                rx.hstack(rx.icon("calendar-days", size=18), rx.text(AppState.campaign["next_session"], class_name="meta-text"), spacing="2"),
-                spacing="2",
-                align="start",
+            rx.fragment(),
+        ),
+        rx.cond(
+            AppState.session_log_entries.length() > 0,
+            rx.box(rx.foreach(AppState.session_log_entries, session_log_entry_row), class_name="log-timeline"),
+            rx.cond(
+                AppState.campaign["session_log"] == "",
+                rx.text(
+                    "Nothing logged yet. After each session the DM adds an entry here, so anyone can catch up on the story so far.",
+                    class_name="hint",
+                ),
+                rx.fragment(),
             ),
+        ),
+        rx.cond(
+            AppState.campaign["session_log"] != "",
+            rx.box(
+                rx.hstack(
+                    rx.text("Earlier recap", class_name="row-title"),
+                    rx.spacer(),
+                    rx.cond(
+                        AppState.is_campaign_dm,
+                        rx.button(rx.icon("x", size=14), rx.text("Dismiss"), on_click=AppState.clear_legacy_session_log, class_name="ghost-action"),
+                        rx.fragment(),
+                    ),
+                    width="100%",
+                    align="center",
+                ),
+                rx.text(AppState.campaign["session_log"], class_name="log-body"),
+                class_name="log-entry legacy",
+            ),
+            rx.fragment(),
         ),
         class_name="panel",
     )
@@ -1773,45 +1864,238 @@ def my_character_panel() -> rx.Component:
     )
 
 
+def shared_notes_panel() -> rx.Component:
+    return rx.box(
+        rx.heading("Shared Notes", class_name="section-heading"),
+        rx.text_area(
+            default_value=AppState.campaign["shared_notes"],
+            on_blur=AppState.save_shared_notes,
+            placeholder="Party plans, clues, loot splits — everyone in the campaign can edit this.",
+            key=AppState.campaign["id"].to_string() + "-shared",
+            class_name="textarea tall",
+        ),
+        rx.text("Saves automatically when you click away.", class_name="hint"),
+        class_name="panel",
+    )
+
+
 def campaign_hub() -> rx.Component:
     return rx.grid(
+        party_roster_panel(),
         session_log_panel(),
-        rx.box(
-            rx.heading("Shared Notes", class_name="section-heading"),
-            rx.text_area(
-                default_value=AppState.campaign["shared_notes"],
-                on_blur=AppState.save_shared_notes,
-                placeholder="Party plans, clues, loot splits — everyone in the campaign can edit this.",
-                key=AppState.campaign["id"].to_string() + "-shared",
-                class_name="textarea tall",
-            ),
-            rx.text("Saves automatically when you click away.", class_name="hint"),
-            class_name="panel",
-        ),
-        rx.box(
-            rx.heading("Player Roster", class_name="section-heading"),
-            rx.cond(
-                AppState.party_summary == "0 characters, 0 need attention",
-                empty_state("No characters in this campaign yet", "Players will appear here after they join and attach a character."),
-                rx.foreach(AppState.party_members, party_status_row),
-            ),
-            class_name="panel span-2",
-        ),
-        campaign_members_panel(),
-        my_character_panel(),
+        rx.vstack(my_character_panel(), shared_notes_panel(), spacing="4", width="100%"),
         columns="2",
         spacing="4",
         class_name="campaign-grid",
     )
 
 
-def campaign_members_panel() -> rx.Component:
-    """Everyone in the campaign — DM first — with their character status."""
+def member_hp_stepper(member: rx.Var[dict]) -> rx.Component:
+    """Fine-grained DM HP control: single points for attrition, fives for big hits."""
+    return rx.hstack(
+        rx.button("-5", on_click=lambda: AppState.damage_member(member["id"], 5), class_name="hp-step danger"),
+        rx.button("-1", on_click=lambda: AppState.damage_member(member["id"], 1), class_name="hp-step danger"),
+        rx.button("+1", on_click=lambda: AppState.heal_member(member["id"], 1), class_name="hp-step success"),
+        rx.button("+5", on_click=lambda: AppState.heal_member(member["id"], 5), class_name="hp-step success"),
+        spacing="1",
+        class_name="hp-stepper",
+    )
+
+
+def quick_score_tile(label: str, mod, score) -> rx.Component:
     return rx.box(
-        rx.heading("Campaign Members", class_name="section-heading"),
-        rx.text(AppState.member_summary, class_name="hint"),
-        rx.foreach(AppState.members, campaign_member_row),
-        class_name="panel",
+        rx.text(label, class_name="stat-label"),
+        rx.heading(mod, class_name="quick-score-mod"),
+        rx.text(score, class_name="stat-sub"),
+        class_name="quick-score",
+    )
+
+
+def quick_stat(label: str, *values) -> rx.Component:
+    return rx.box(
+        rx.text(label, class_name="stat-label"),
+        rx.heading(*values, class_name="quick-stat-value"),
+        class_name="quick-stat",
+    )
+
+
+def detail_line(label: str, value) -> rx.Component:
+    return rx.text(
+        rx.text(label + ": ", as_="span", class_name="detail-label"),
+        value,
+        class_name="detail-line",
+    )
+
+
+def member_quick_view_dialog(member: rx.Var[dict]) -> rx.Component:
+    """A read-only glance at any party character without leaving the hub."""
+    return rx.dialog.root(
+        rx.dialog.trigger(rx.button(rx.icon("eye", size=16), rx.text("View"), class_name="secondary-action")),
+        rx.dialog.content(
+            rx.dialog.title(member["character_name"]),
+            rx.dialog.description(member["identity"], " · played by ", member["display_name"]),
+            rx.grid(
+                quick_stat("Armor Class", member["ac"]),
+                quick_stat("Hit Points", member["current_hp"], " / ", member["max_hp"]),
+                quick_stat("Initiative", member["initiative"]),
+                quick_stat("Passive Perception", member["passive_perception"]),
+                columns="4",
+                spacing="2",
+                class_name="quick-stat-grid",
+            ),
+            rx.grid(
+                quick_score_tile("STR", member["mod_strength"], member["score_strength"]),
+                quick_score_tile("DEX", member["mod_dexterity"], member["score_dexterity"]),
+                quick_score_tile("CON", member["mod_constitution"], member["score_constitution"]),
+                quick_score_tile("INT", member["mod_intelligence"], member["score_intelligence"]),
+                quick_score_tile("WIS", member["mod_wisdom"], member["score_wisdom"]),
+                quick_score_tile("CHA", member["mod_charisma"], member["score_charisma"]),
+                columns="6",
+                spacing="2",
+                class_name="quick-score-grid",
+            ),
+            rx.vstack(
+                detail_line("Skills", member["skills"]),
+                detail_line("Saving throws", member["saves"]),
+                detail_line("Weapons", member["weapons"]),
+                detail_line("Location", member["location"]),
+                rx.cond(member["conditions"] != "", detail_line("Conditions", member["conditions"]), rx.fragment()),
+                spacing="1",
+                align="start",
+                width="100%",
+                class_name="quick-details",
+            ),
+            rx.flex(rx.dialog.close(rx.button("Close", class_name="secondary-action")), justify="end", margin_top="12px"),
+            class_name="quick-view-content",
+        ),
+    )
+
+
+def edit_member_dialog(member: rx.Var[dict]) -> rx.Component:
+    """DM-only: set exact HP, location, and conditions for one party member."""
+    return rx.dialog.root(
+        rx.dialog.trigger(rx.button(rx.icon("sliders-horizontal", size=16), rx.text("Edit"), class_name="secondary-action")),
+        rx.dialog.content(
+            rx.dialog.title("Edit ", member["character"]),
+            rx.dialog.description("Set exact HP, where they are, and any active conditions."),
+            rx.form(
+                rx.vstack(
+                    rx.el.input(type="hidden", name="member_id", value=member["id"].to_string()),
+                    rx.box(
+                        rx.text("Current HP (max ", member["max_hp"], ")", class_name="field-label"),
+                        rx.input(name="current_hp", type="number", default_value=member["current_hp"].to_string(), class_name="field"),
+                        width="100%",
+                    ),
+                    rx.box(
+                        rx.text("Location", class_name="field-label"),
+                        rx.input(name="location", placeholder="Where the party last saw them", default_value=member["location"], class_name="field"),
+                        width="100%",
+                    ),
+                    rx.box(
+                        rx.text("Conditions", class_name="field-label"),
+                        rx.input(name="conditions", placeholder="poisoned, frightened... (blank = none)", default_value=member["conditions"], class_name="field"),
+                        width="100%",
+                    ),
+                    rx.flex(
+                        rx.dialog.close(rx.button("Cancel", type="button", class_name="secondary-action")),
+                        rx.dialog.close(rx.button("Save changes", type="submit", class_name="primary-action")),
+                        spacing="3",
+                        justify="end",
+                        width="100%",
+                    ),
+                    spacing="3",
+                    align="stretch",
+                ),
+                on_submit=AppState.save_member_status,
+                # Remount when the saved values change so reopening shows fresh defaults.
+                key=member["id"].to_string() + "-edit-" + member["current_hp"].to_string() + "-" + member["location"].to_string() + "-" + member["conditions"].to_string(),
+            ),
+        ),
+    )
+
+
+def roster_member_row(member: rx.Var[dict]) -> rx.Component:
+    return rx.box(
+        rx.hstack(
+            rx.vstack(
+                rx.hstack(
+                    rx.text(member["display_name"], class_name="row-title"),
+                    rx.cond(member["role"] == "dm", rx.text("DM", class_name="role-chip dm"), rx.text("Player", class_name="role-chip")),
+                    spacing="2",
+                    align="center",
+                ),
+                rx.cond(
+                    member["has_character"],
+                    rx.text("Playing ", member["character_name"], " — ", member["class_level"], class_name="row-subtitle"),
+                    rx.cond(
+                        member["role"] == "dm",
+                        rx.text("Runs the campaign", class_name="row-subtitle"),
+                        rx.text("No character attached yet", class_name="row-subtitle"),
+                    ),
+                ),
+                spacing="0",
+                align="start",
+            ),
+            rx.spacer(),
+            rx.cond(member["has_character"], member_quick_view_dialog(member), rx.fragment()),
+            rx.cond(
+                member["is_me"] & member["has_character"],
+                rx.button(rx.icon("arrow-right", size=16), rx.text("My sheet"), on_click=lambda: AppState.open_character_sheet(member["character_id"]), class_name="secondary-action"),
+                rx.fragment(),
+            ),
+            rx.cond(AppState.is_campaign_dm & member["has_character"], edit_member_dialog(member), rx.fragment()),
+            rx.cond(AppState.is_campaign_dm & (member["role"] != "dm"), remove_member_dialog(member), rx.fragment()),
+            width="100%",
+            align="center",
+            class_name="roster-actions",
+        ),
+        rx.cond(
+            member["has_character"],
+            rx.hstack(
+                rx.text(member["current_hp"], " / ", member["max_hp"], " HP", class_name="hp-value"),
+                rx.box(
+                    rx.box(
+                        class_name=rx.cond(
+                            member["hp_state"] == "healthy",
+                            "hp-fill",
+                            rx.cond(member["hp_state"] == "hurt", "hp-fill hurt", "hp-fill critical"),
+                        ),
+                        style={"width": member["hp_percent"]},
+                    ),
+                    class_name="hp-track roster-hp-track",
+                ),
+                rx.cond(member["conditions"] != "", rx.text(member["conditions"], class_name="condition-chip"), rx.fragment()),
+                rx.hstack(rx.icon("map-pin", size=14), rx.text(member["location"], class_name="location-text"), spacing="1", align="center"),
+                rx.spacer(),
+                rx.cond(AppState.is_campaign_dm, member_hp_stepper(member), rx.fragment()),
+                spacing="3",
+                align="center",
+                width="100%",
+                class_name="roster-status-line",
+            ),
+            rx.fragment(),
+        ),
+        class_name="roster-row",
+    )
+
+
+def party_roster_panel() -> rx.Component:
+    """Everyone at the table, with live character status — the hub's centerpiece."""
+    return rx.box(
+        rx.hstack(
+            rx.heading("Party Roster", class_name="section-heading"),
+            rx.spacer(),
+            rx.text(AppState.member_summary, class_name="hint"),
+            width="100%",
+            align="center",
+        ),
+        rx.cond(
+            AppState.is_campaign_dm,
+            rx.text("−/+ deals damage or healing one point (or five) at a time. Edit sets exact HP, location, and conditions.", class_name="hint"),
+            rx.text("Tap View on any hero for their stats at a glance.", class_name="hint"),
+        ),
+        rx.foreach(AppState.members, roster_member_row),
+        class_name="panel span-2",
     )
 
 
@@ -1841,37 +2125,6 @@ def remove_member_dialog(member: rx.Var[dict]) -> rx.Component:
                 margin_top="16px",
             ),
         ),
-    )
-
-
-def campaign_member_row(member: rx.Var[dict]) -> rx.Component:
-    return rx.hstack(
-        rx.vstack(
-            rx.text(member["display_name"], class_name="row-title"),
-            rx.cond(
-                member["character_name"] != "",
-                rx.text("Playing ", member["character_name"], " — ", member["class_level"], class_name="row-subtitle"),
-                rx.cond(
-                    member["role"] == "dm",
-                    rx.text("Runs the campaign", class_name="row-subtitle"),
-                    rx.text("No character attached yet", class_name="row-subtitle"),
-                ),
-            ),
-            spacing="0",
-            align="start",
-        ),
-        rx.spacer(),
-        rx.cond(
-            member["role"] == "dm",
-            rx.text("DM", class_name="role-chip dm"),
-            rx.text("Player", class_name="role-chip"),
-        ),
-        rx.cond(
-            AppState.is_campaign_dm & (member["role"] != "dm"),
-            remove_member_dialog(member),
-            rx.fragment(),
-        ),
-        class_name="compact-row",
     )
 
 
@@ -1983,12 +2236,7 @@ def party_status_row(member: rx.Var[dict]) -> rx.Component:
                 spacing="2",
             ),
             rx.text(member["location"], class_name="location-text"),
-            rx.hstack(
-                icon_button("minus", "Damage", lambda: AppState.damage_member(member["id"], 5), "icon-button danger"),
-                icon_button("plus", "Heal", lambda: AppState.heal_member(member["id"], 5), "icon-button success"),
-                spacing="2",
-                justify="end",
-            ),
+            member_hp_stepper(member),
             columns="4",
             spacing="3",
             align="center",
@@ -2077,9 +2325,11 @@ def initiative_row(row: rx.Var[dict]) -> rx.Component:
             rx.text("AC ", row["ac"], class_name="metric-pill"),
             rx.text(row["current_hp"], "/", row["max_hp"], class_name="hp-pill"),
             rx.hstack(
-                icon_button("minus", "Damage", lambda: AppState.damage_combatant(row["key"], 5), "icon-button danger"),
-                icon_button("plus", "Heal", lambda: AppState.heal_combatant(row["key"], 5), "icon-button success"),
-                spacing="2",
+                rx.button("-5", on_click=lambda: AppState.damage_combatant(row["key"], 5), class_name="hp-step danger"),
+                rx.button("-1", on_click=lambda: AppState.damage_combatant(row["key"], 1), class_name="hp-step danger"),
+                rx.button("+1", on_click=lambda: AppState.heal_combatant(row["key"], 1), class_name="hp-step success"),
+                rx.button("+5", on_click=lambda: AppState.heal_combatant(row["key"], 5), class_name="hp-step success"),
+                spacing="1",
                 justify="end",
             ),
             columns="5",

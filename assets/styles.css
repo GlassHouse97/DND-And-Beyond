@@ -1501,3 +1501,206 @@ select {
   font-size: 0.94rem;
   line-height: 1.5;
 }
+
+/* ---------- Campaign hub: roster, HP stepper, session log ---------- */
+
+.roster-row {
+  border-top: 1px solid rgba(109, 98, 88, 0.2);
+  padding: 14px 0;
+}
+
+.roster-row:first-of-type {
+  border-top: 0;
+}
+
+.roster-actions {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.roster-status-line {
+  margin-top: 10px;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.roster-hp-track {
+  flex: 1 1 140px;
+  max-width: 320px;
+}
+
+.hp-fill.hurt {
+  background: linear-gradient(90deg, #c98a3b, #e0b34c);
+}
+
+.hp-fill.critical {
+  background: linear-gradient(90deg, #8f1d20, #c94b3b);
+}
+
+.hp-stepper {
+  flex-wrap: nowrap;
+}
+
+.hp-step {
+  min-width: 38px;
+  min-height: 34px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  font-weight: 900;
+  cursor: pointer;
+  transition: transform 140ms var(--ease), background 140ms var(--ease);
+}
+
+.hp-step:hover {
+  transform: translateY(-1px);
+}
+
+.hp-step:active {
+  transform: scale(0.94);
+}
+
+.hp-step.danger {
+  background: #f9e4dd;
+  color: var(--red-dark);
+  border-color: rgba(157, 31, 34, 0.4);
+}
+
+.hp-step.success {
+  background: #eaf0dc;
+  color: #3e5a30;
+  border-color: rgba(88, 116, 68, 0.45);
+}
+
+.icon-button.small {
+  min-height: 32px;
+  width: 32px;
+  padding: 0;
+}
+
+.ghost-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-weight: 800;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.ghost-action:hover {
+  background: rgba(109, 98, 88, 0.12);
+  color: var(--ink);
+}
+
+.log-composer {
+  margin: 12px 0 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed rgba(109, 98, 88, 0.35);
+}
+
+.log-timeline {
+  margin-top: 6px;
+}
+
+.log-entry {
+  border-top: 1px solid rgba(109, 98, 88, 0.2);
+  padding: 12px 0;
+}
+
+.log-entry:first-of-type {
+  border-top: 0;
+}
+
+.log-entry.legacy {
+  margin-top: 10px;
+  border-top: 1px dashed rgba(109, 98, 88, 0.35);
+  opacity: 0.85;
+}
+
+.log-date {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+}
+
+.log-body {
+  margin: 6px 0 0;
+  color: #4c4137;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* Quick-view dialog */
+.quick-view-content {
+  max-width: 600px;
+}
+
+.quick-stat-grid {
+  margin: 14px 0 10px;
+}
+
+.quick-stat {
+  background: #fff8ea;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.quick-stat-value {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+  color: var(--red-dark);
+}
+
+.quick-score {
+  background: #f6ecd4;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 4px;
+  text-align: center;
+}
+
+.quick-score-mod {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--ink);
+}
+
+.quick-details {
+  margin-top: 14px;
+}
+
+.detail-line {
+  margin: 0;
+  color: #4c4137;
+  line-height: 1.55;
+}
+
+.detail-label {
+  font-weight: 900;
+  color: var(--red-dark);
+  text-transform: uppercase;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 720px) {
+  .roster-status-line .hp-stepper {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .quick-score-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+
+  .quick-stat-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}

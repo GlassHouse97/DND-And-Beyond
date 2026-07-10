@@ -100,6 +100,49 @@ def test_verified_user_sees_only_their_characters_and_campaign_roles(tmp_path, m
     assert member["current_hp"] == data_access.HP_UNSET
 
 
+def test_session_log_and_member_status_editing(tmp_path, monkeypatch):
+    monkeypatch.setattr(data_access, "DB_PATH", tmp_path / "app.db")
+
+    data_access.create_user("dm@example.com", "hash-1", "The DM", "t-dm")
+    data_access.verify_user_email("dm@example.com", "t-dm")
+    dm = data_access.get_user_by_email("dm@example.com")
+    data_access.create_user("player@example.com", "hash-2", "Player", "t-p")
+    data_access.verify_user_email("player@example.com", "t-p")
+    player = data_access.get_user_by_email("player@example.com")
+
+    campaign_id = data_access.create_campaign(dm["id"], "Logged Table", "Friday", "LOG-1111")
+    data_access.join_campaign(player["id"], "LOG-1111", None)
+
+    # Session log: DM-only writes, blank entries rejected, newest first.
+    ok, reason = data_access.create_session_log_entry(campaign_id, player["id"], "Session 1", "We met.")
+    assert not ok and reason == "not_dm"
+    ok, reason = data_access.create_session_log_entry(campaign_id, dm["id"], "  ", "")
+    assert not ok and reason == "empty"
+    assert data_access.create_session_log_entry(campaign_id, dm["id"], "Session 1", "The party met in a tavern.") == (True, "created")
+    assert data_access.create_session_log_entry(campaign_id, dm["id"], "Session 2", "Goblins ambushed the road.") == (True, "created")
+    entries = data_access.list_session_log_entries(campaign_id)
+    assert [entry["title"] for entry in entries] == ["Session 2", "Session 1"]
+    assert entries[0]["created_at"]
+
+    # Deleting an entry is DM-only too.
+    assert data_access.delete_session_log_entry(entries[1]["id"], player["id"]) is False
+    assert data_access.delete_session_log_entry(entries[1]["id"], dm["id"]) is True
+    assert [entry["title"] for entry in data_access.list_session_log_entries(campaign_id)] == ["Session 2"]
+    assert data_access.delete_session_log_entry(9999, dm["id"]) is False
+
+    # Member status edits are DM-only; empty updates are rejected outright.
+    member = next(m for m in data_access.list_campaign_members(campaign_id) if m["user_id"] == player["id"])
+    assert data_access.update_member_status(member["id"], player["id"], current_hp=3) is False
+    assert data_access.update_member_status(member["id"], dm["id"]) is False
+    assert data_access.update_member_status(
+        member["id"], dm["id"], current_hp=3, location="Goblin cave", conditions="poisoned"
+    ) is True
+    member = next(m for m in data_access.list_campaign_members(campaign_id) if m["user_id"] == player["id"])
+    assert member["current_hp"] == 3
+    assert member["location"] == "Goblin cave"
+    assert member["active_conditions"] == "poisoned"
+
+
 def test_campaign_directory_and_join_request_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(data_access, "DB_PATH", tmp_path / "app.db")
 
@@ -230,10 +273,15 @@ def test_purge_user_data_removes_every_user_facing_record_and_resets_ids(tmp_pat
             (campaign_id, "character", character_id, "Reset Hero", 16, 12, 12, 14, 1),
         )
         conn.execute("INSERT INTO join_requests (campaign_id, user_id) VALUES (?, ?)", (campaign_id, user["id"]))
+        conn.execute(
+            "INSERT INTO session_log_entries (campaign_id, title, body) VALUES (?, ?, ?)",
+            (campaign_id, "Session 1", "It begins."),
+        )
         conn.commit()
 
     counts = data_access.purge_user_data()
     assert counts == {
+        "session_log_entries": 1,
         "initiative_combatants": 1,
         "npcs": 1,
         "dm_notes": 1,

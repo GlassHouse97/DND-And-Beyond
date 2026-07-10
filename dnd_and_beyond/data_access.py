@@ -61,6 +61,7 @@ HP_UNSET = -1
 # User-created records only. Rule catalogs and app metadata survive a reset so
 # a fresh account can begin using the app immediately after the purge.
 USER_DATA_TABLES: tuple[str, ...] = (
+    "session_log_entries",
     "initiative_combatants",
     "npcs",
     "dm_notes",
@@ -173,6 +174,14 @@ CREATE TABLE IF NOT EXISTS join_requests (
     status TEXT NOT NULL DEFAULT 'pending',
     {created_at_column},
     resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS session_log_entries (
+    {id_column},
+    campaign_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    {created_at_column}
 );
 
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -987,6 +996,96 @@ def update_campaign_details(
         conn.commit()
 
 
+def _is_campaign_dm(conn, campaign_id: int, user_id: int) -> bool:
+    row = conn.execute(
+        _q("SELECT id FROM campaign_members WHERE campaign_id = ? AND user_id = ? AND role = 'dm'"),
+        (campaign_id, user_id),
+    ).fetchone()
+    return row is not None
+
+
+def create_session_log_entry(campaign_id: int, dm_user_id: int, title: str, body: str) -> tuple[bool, str]:
+    """Append a dated entry to the campaign's session log. DM only."""
+    initialize_database()
+    title = title.strip()
+    body = body.strip()
+    if not title and not body:
+        return False, "empty"
+    with connect() as conn:
+        if not _is_campaign_dm(conn, campaign_id, dm_user_id):
+            return False, "not_dm"
+        conn.execute(
+            _q("INSERT INTO session_log_entries (campaign_id, title, body) VALUES (?, ?, ?)"),
+            (campaign_id, title or "Session recap", body),
+        )
+        conn.commit()
+    return True, "created"
+
+
+def list_session_log_entries(campaign_id: int) -> list[dict[str, Any]]:
+    """Session log entries newest-first, so the latest recap leads."""
+    initialize_database()
+    with connect() as conn:
+        rows = conn.execute(
+            _q(
+                """
+                SELECT id, title, body, created_at
+                FROM session_log_entries
+                WHERE campaign_id = ?
+                ORDER BY id DESC
+                """
+            ),
+            (campaign_id,),
+        ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def delete_session_log_entry(entry_id: int, dm_user_id: int) -> bool:
+    initialize_database()
+    with connect() as conn:
+        entry = conn.execute(
+            _q("SELECT campaign_id FROM session_log_entries WHERE id = ?"), (entry_id,)
+        ).fetchone()
+        if entry is None or not _is_campaign_dm(conn, int(entry["campaign_id"]), dm_user_id):
+            return False
+        conn.execute(_q("DELETE FROM session_log_entries WHERE id = ?"), (entry_id,))
+        conn.commit()
+    return True
+
+
+def update_member_status(
+    member_id: int,
+    dm_user_id: int,
+    *,
+    current_hp: int | None = None,
+    location: str | None = None,
+    conditions: str | None = None,
+) -> bool:
+    """DM-only edit of a member's campaign state; None fields stay untouched."""
+    fields = {
+        "current_hp": None if current_hp is None else max(0, int(current_hp)),
+        "location": location,
+        "active_conditions": conditions,
+    }
+    updates = {column: value for column, value in fields.items() if value is not None}
+    if not updates:
+        return False
+    initialize_database()
+    with connect() as conn:
+        member = conn.execute(
+            _q("SELECT campaign_id FROM campaign_members WHERE id = ?"), (member_id,)
+        ).fetchone()
+        if member is None or not _is_campaign_dm(conn, int(member["campaign_id"]), dm_user_id):
+            return False
+        assignments = ", ".join(f"{column} = ?" for column in updates)
+        conn.execute(
+            _q(f"UPDATE campaign_members SET {assignments} WHERE id = ?"),
+            (*updates.values(), member_id),
+        )
+        conn.commit()
+    return True
+
+
 def get_dm_notes(campaign_id: int) -> str:
     initialize_database()
     with connect() as conn:
@@ -1033,7 +1132,19 @@ def list_campaign_members(campaign_id: int) -> list[dict[str, Any]]:
                     ch.name AS character,
                     ch.character_class,
                     ch.level,
-                    ch.constitution
+                    ch.ancestry,
+                    ch.background,
+                    ch.strength,
+                    ch.dexterity,
+                    ch.constitution,
+                    ch.intelligence,
+                    ch.wisdom,
+                    ch.charisma,
+                    ch.armor_name,
+                    ch.has_shield,
+                    ch.skill_proficiencies,
+                    ch.save_proficiencies,
+                    ch.weapons
                 FROM campaign_members cm
                 JOIN users u ON u.id = cm.user_id
                 LEFT JOIN characters ch ON ch.id = cm.character_id
