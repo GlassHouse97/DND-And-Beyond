@@ -1,6 +1,10 @@
 *.py[cod]
 assets/external/
 .claude/
+.agents/
+.codex/
+.idea/
+.workspace_data/
 .web
 .states
 .venv/

@@ -4,12 +4,11 @@ from pathlib import Path
 
 _project_root = Path(__file__).resolve().parent
 
-# Keep local build products and state outside the watched source tree without
-# scattering them across the parent projects directory. Production supplies
-# DND_DATA_DIR in the container, so its established /app and /data paths remain
-# unchanged.
+# Keep local build products and state in one gitignored directory that is
+# excluded from hot reload below. Production supplies DND_DATA_DIR in the
+# container, so its established /app and /data paths remain unchanged.
 if not os.getenv("DND_DATA_DIR"):
-    _workspace_data_root = _project_root.parent / ".workspace_data" / "DndAndBeyond"
+    _workspace_data_root = _project_root / ".workspace_data"
     os.environ.setdefault("REFLEX_DIR", str(_workspace_data_root / "reflex"))
     os.environ.setdefault("REFLEX_WEB_WORKDIR", str(_workspace_data_root / "web"))
     os.environ.setdefault("REFLEX_STATES_WORKDIR", str(_workspace_data_root / "states"))
@@ -23,9 +22,9 @@ from reflex_base.environment import environment
 # exclusion check calls Path.samefile, which raises on missing paths — so only
 # register the exclusion when the directory actually exists (it is gitignored
 # and absent on fresh clones; runtime data now lives outside the repo anyway).
-_legacy_data_dir = Path("data")
-if _legacy_data_dir.is_dir():
-    environment.REFLEX_HOT_RELOAD_EXCLUDE_PATHS.set([_legacy_data_dir])
+_watcher_exclusions = [path for path in (Path("data"), Path(".workspace_data")) if path.is_dir()]
+if _watcher_exclusions:
+    environment.REFLEX_HOT_RELOAD_EXCLUDE_PATHS.set(_watcher_exclusions)
 
 
 class _StableSet(set):

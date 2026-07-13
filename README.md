@@ -68,20 +68,22 @@ class spell selections.
 
 ## Local email verification
 
-For local testing, registration does not send real email unless SMTP settings are configured. Verification messages are written next to the SQLite database. By default, runtime data lives outside this repo:
+For local testing, registration does not send real email unless SMTP settings are configured. Verification messages are written next to the SQLite database. By default, runtime data lives in a Git-ignored and watcher-excluded project directory:
 
 ```text
-../.workspace_data/DndAndBeyond/runtime/data/dev_email_outbox.log
+./.workspace_data/runtime/data/dev_email_outbox.log
 ```
 
 Register, open that outbox, copy the verification code, then use the Verify Email tab in the app. Later, set `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and related values from `.env.example` to send real verification email.
 
-Do not keep the active SQLite database inside this repo while running `reflex run`. Reflex watches the project tree for source changes, and SQLite WAL/SHM writes can trigger a browser refresh loop.
+Do not keep the active SQLite database elsewhere inside the watched source tree
+while running `reflex run`. SQLite WAL/SHM writes can trigger a browser refresh
+loop unless the containing directory is explicitly excluded.
 
 Local Reflex build output, state snapshots, npm cache files, and SQLite runtime
-data are consolidated under `../.workspace_data/DndAndBeyond/`. The folder is
-generated locally and is not part of the Git repository or the Cloud Run
-deployment.
+data are consolidated under `./.workspace_data/`. The folder is generated
+locally, ignored by Git and Docker, and excluded from Reflex hot reload. It is
+not part of the Cloud Run deployment.
 
 ## Run tests
 

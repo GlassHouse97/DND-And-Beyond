@@ -42,12 +42,12 @@ def _data_dir() -> Path:
 
 
 def _external_data_dir() -> Path:
-    """Runtime data outside the repo so Reflex hot reload ignores DB writes."""
+    """Runtime data in the project workspace directory excluded from hot reload."""
     override = os.getenv("DND_DATA_DIR", "").strip()
     if override:
         return Path(override)
     project_root = Path(__file__).resolve().parent.parent
-    return project_root.parent / ".workspace_data" / "DndAndBeyond" / "runtime" / "data"
+    return project_root / ".workspace_data" / "runtime" / "data"
 
 
 DEFAULT_DB_PATH = _external_data_dir() / "dnd_and_beyond.db"

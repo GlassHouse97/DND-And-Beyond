@@ -1,4 +1,8 @@
 .git
+.agents
+.codex
+.idea
+.workspace_data
 .venv
 .web
 .states
