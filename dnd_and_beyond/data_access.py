@@ -47,7 +47,7 @@ def _external_data_dir() -> Path:
     if override:
         return Path(override)
     project_root = Path(__file__).resolve().parent.parent
-    return project_root.parent / ".dnd_and_beyond_runtime" / "data"
+    return project_root.parent / ".workspace_data" / "DndAndBeyond" / "runtime" / "data"
 
 
 DEFAULT_DB_PATH = _external_data_dir() / "dnd_and_beyond.db"
